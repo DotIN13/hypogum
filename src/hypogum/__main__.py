@@ -13,7 +13,7 @@ def _make_db(config: Config):
     if config.db_mode == "remote":
         from hypogum.db.remote import RemoteDBStore
         assert config.db_url, "HYPOGUM_DB_URL required for remote db mode"
-        return RemoteDBStore(config.db_url, config.store_api_key)
+        return RemoteDBStore(config.db_url)
     db = LocalDBStore(str(config.data_dir / "app.db"))
     return db
 
@@ -22,7 +22,7 @@ def _make_vec(config: Config):
     if config.vec_mode == "remote":
         from hypogum.vector.remote import RemoteVectorStore
         assert config.vec_url, "HYPOGUM_VEC_URL required for remote vector mode"
-        return RemoteVectorStore(config.vec_url, config.store_api_key)
+        return RemoteVectorStore(config.vec_url)
     vec = LocalVectorStore(str(config.data_dir / "chroma.db"))
     return vec
 

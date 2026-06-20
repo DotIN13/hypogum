@@ -45,12 +45,9 @@ async def _find_similar_traits(
 ) -> list[dict]:
     """Embed the query and search for semantically similar personality/skill/interest/etc traits."""
     embeddings = await llm.embed([query])
-    results = await vec.search(
+    traits = await vec.search(
         user_id, embeddings[0], limit=limit, exclude_type="event",
     )
-    traits = [r for r in results
-              if r.get("type") in _TRAIT_TYPES
-              and r.get("similarity", 0) >= threshold]
 
     lines = [f"[proactive-tip] traits query (threshold={threshold}): \"{query[:120]}\""]
     if traits:
@@ -61,6 +58,10 @@ async def _find_similar_traits(
     else:
         lines.append("  → no matching traits found")
     logger.info("\n".join(lines))
+
+    traits = [r for r in traits
+              if r.get("type") in _TRAIT_TYPES
+              and r.get("similarity", 0) >= threshold]
     return traits
 
 
@@ -101,7 +102,11 @@ async def _build_prompt_sections(
     goals_section = "\n".join(
         f"- {g.get('content', '')} (confidence: {g.get('confidence', '?')}, similarity: {g.get('similarity', 0):.2f})"
         for g in goals
-    ) if goals else "(no matching goals)"
+    ) if goals else (
+        "(No stored goals found — infer the user's most likely goals from their "
+        "current events, screen observation, activity summary, and known traits, "
+        "and generate tips for those inferred goals.)"
+    )
 
     now_ts = current_timestamp or "just now"
     events_section = "\n".join(
@@ -239,8 +244,7 @@ async def generate_proactive_tip(
     )
 
     if not sections["goals_raw"]:
-        logger.info("No relevant goals found; returning empty tips.")
-        return {"tips": []}
+        logger.info("No relevant goals found; asking LLM to infer goals from current activity.")
 
     prompt = _format_tip_prompt(
         prompts_dir,

@@ -55,7 +55,6 @@ class Config:
     db_url: str | None = "http://localhost:8055"
     vec_mode: Literal["local", "remote"] = "remote"
     vec_url: str | None = "http://localhost:8055"
-    store_api_key: str | None = None
     store_host: str = "0.0.0.0"
     store_port: int = 8055
     data_dir: Path = field(default_factory=_resolve_data_dir)
@@ -109,7 +108,6 @@ class Config:
             db_url=os.environ.get("HYPOGUM_DB_URL") or "http://localhost:8055",
             vec_mode=os.environ.get("HYPOGUM_VEC_MODE", "remote"),  # type: ignore[arg-type]
             vec_url=os.environ.get("HYPOGUM_VEC_URL") or "http://localhost:8055",
-            store_api_key=os.environ.get("HYPOGUM_STORE_API_KEY") or None,
             store_host=os.environ.get("HYPOGUM_STORE_HOST", "0.0.0.0"),
             store_port=int(os.environ.get("HYPOGUM_STORE_PORT", "8055")),
             data_dir=_resolve_data_dir(),

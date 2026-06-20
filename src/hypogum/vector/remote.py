@@ -4,16 +4,12 @@ from hypogum.vector.base import VectorStore
 class RemoteVectorStore(VectorStore):
     """Async HTTP client that delegates to a remote hypogum vector endpoint."""
 
-    def __init__(self, base_url: str, api_key: str | None = None):
+    def __init__(self, base_url: str):
         self._base = base_url.rstrip("/")
-        self._api_key = api_key
         self._client: object | None = None
 
     def _headers(self) -> dict[str, str]:
-        h = {"Content-Type": "application/json"}
-        if self._api_key:
-            h["X-API-Key"] = self._api_key
-        return h
+        return {"Content-Type": "application/json"}
 
     async def _ensure_client(self):
         if self._client is None:
@@ -46,7 +42,6 @@ class RemoteVectorStore(VectorStore):
                      limit: int = 10, item_type: str | None = None,
                      exclude_type: str | None = None) -> list[dict]:
         result = await self._post("/vectors/search", {
-            "user_id": user_id,
             "embedding": embedding,
             "limit": limit,
             "item_type": item_type,
@@ -58,7 +53,6 @@ class RemoteVectorStore(VectorStore):
                            item_type: str, threshold: float = 0.85, limit: int = 5
                            ) -> tuple[dict | None, float, list[tuple[dict, float]]]:
         result = await self._post("/vectors/similar", {
-            "user_id": user_id,
             "embedding": embedding,
             "item_type": item_type,
             "threshold": threshold,
@@ -70,14 +64,14 @@ class RemoteVectorStore(VectorStore):
         return best, best_sim, candidates
 
     async def add(self, user_id: str, records: list[dict]) -> None:
-        await self._post("/vectors", {"user_id": user_id, "records": records})
+        await self._post("/vectors", {"records": records})
 
     async def update_metadata(self, user_id: str, item_id: str, metadata: dict) -> None:
-        await self._patch(f"/vectors/{item_id}/metadata", {"user_id": user_id, "metadata": metadata})
+        await self._patch(f"/vectors/{item_id}/metadata", {"metadata": metadata})
 
     async def get_all(self, user_id: str, *,
                       item_type: str | None = None,
                       limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-        result = await self._get("/vectors/all", user_id=user_id,
+        result = await self._get("/vectors/all",
                                  item_type=item_type, limit=limit, offset=offset)
         return result["items"], result["total"]

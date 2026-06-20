@@ -1,6 +1,6 @@
 import json
 import os
-from fastapi import FastAPI, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from pydantic import BaseModel
 from loguru import logger
 
@@ -21,47 +21,39 @@ def create_store_app(
     # ── models ─────────────────────────────────
 
     class SaveObservationReq(BaseModel):
-        user_id: str
         type: str
         image_path: str
         timestamp: str
         window_titles: list[str] | None = None
 
     class MarkProcessedReq(BaseModel):
-        user_id: str
         ids: list[int]
 
     class SaveEventReq(BaseModel):
-        user_id: str
         timestamp: str
         summary: str
         transcripts: str
         context: str
 
     class UpdateTipReq(BaseModel):
-        user_id: str
         tip: str
 
     class VectorSearchReq(BaseModel):
-        user_id: str
         embedding: list[float]
         limit: int = 10
         item_type: str | None = None
         exclude_type: str | None = None
 
     class VectorSimilarReq(BaseModel):
-        user_id: str
         embedding: list[float]
         item_type: str
         threshold: float = 0.85
         limit: int = 5
 
     class VectorAddReq(BaseModel):
-        user_id: str
         records: list[dict]
 
     class VectorUpdateMetaReq(BaseModel):
-        user_id: str
         metadata: dict
 
     # ── auth dependency ────────────────────────
@@ -72,26 +64,25 @@ def create_store_app(
     # ── observations ───────────────────────────
 
     @app.post("/api/v1/observations")
-    async def save_observation(req: SaveObservationReq, ctx: AuthContext = None):
-        required_user = req.user_id or (ctx.user_id if ctx else "default")
+    async def save_observation(req: SaveObservationReq, ctx: AuthContext = Depends(_get_auth)):
         obs_id = await db.save_observation(
-            required_user, req.type, req.image_path, req.timestamp, req.window_titles,
+            ctx.user_id, req.type, req.image_path, req.timestamp, req.window_titles,
         )
         return {"id": obs_id}
 
     @app.get("/api/v1/observations/pending")
-    async def get_pending_observations(user_id: str = Query(...), limit: int = Query(20)):
-        items = await db.get_pending_observations(user_id, limit)
+    async def get_pending_observations(limit: int = Query(20), ctx: AuthContext = Depends(_get_auth)):
+        items = await db.get_pending_observations(ctx.user_id, limit)
         return {"items": items}
 
     @app.post("/api/v1/observations/processed")
-    async def mark_observations_processed(req: MarkProcessedReq):
-        await db.mark_observations_processed(req.user_id, req.ids)
+    async def mark_observations_processed(req: MarkProcessedReq, ctx: AuthContext = Depends(_get_auth)):
+        await db.mark_observations_processed(ctx.user_id, req.ids)
         return {"status": "ok"}
 
     @app.get("/api/v1/observations/{obs_id}")
-    async def get_observation(obs_id: int, user_id: str = Query(...)):
-        item = await db.get_observation(user_id, obs_id)
+    async def get_observation(obs_id: int, ctx: AuthContext = Depends(_get_auth)):
+        item = await db.get_observation(ctx.user_id, obs_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Observation not found")
         return {"item": item}
@@ -99,48 +90,51 @@ def create_store_app(
     # ── events ────────────────────────────────
 
     @app.post("/api/v1/events")
-    async def save_event(req: SaveEventReq):
+    async def save_event(req: SaveEventReq, ctx: AuthContext = Depends(_get_auth)):
         event_id = await db.save_event(
-            req.user_id, req.timestamp, req.summary, req.transcripts, req.context,
+            ctx.user_id, req.timestamp, req.summary, req.transcripts, req.context,
         )
         return {"id": event_id}
 
     @app.get("/api/v1/events")
-    async def get_events(user_id: str = Query(...), limit: int = Query(15), offset: int = Query(0)):
-        items, total = await db.get_events(user_id, limit, offset)
+    async def get_events(limit: int = Query(15), offset: int = Query(0),
+                         ctx: AuthContext = Depends(_get_auth)):
+        items, total = await db.get_events(ctx.user_id, limit, offset)
         return {"items": items, "total": total}
 
     @app.get("/api/v1/events/{event_id}")
-    async def get_event(event_id: int, user_id: str = Query(...)):
-        item = await db.get_event(user_id, event_id)
+    async def get_event(event_id: int, ctx: AuthContext = Depends(_get_auth)):
+        item = await db.get_event(ctx.user_id, event_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Event not found")
         return {"item": item}
 
     @app.patch("/api/v1/events/{event_id}/tip")
-    async def update_event_tip(event_id: int, req: UpdateTipReq):
-        await db.update_event_tip(req.user_id, event_id, req.tip)
+    async def update_event_tip(event_id: int, req: UpdateTipReq,
+                               ctx: AuthContext = Depends(_get_auth)):
+        await db.update_event_tip(ctx.user_id, event_id, req.tip)
         return {"status": "ok"}
 
     @app.get("/api/v1/tips")
-    async def get_tips(user_id: str = Query(...), limit: int = Query(50), offset: int = Query(0)):
-        items, total = await db.get_tips(user_id, limit, offset)
+    async def get_tips(limit: int = Query(50), offset: int = Query(0),
+                       ctx: AuthContext = Depends(_get_auth)):
+        items, total = await db.get_tips(ctx.user_id, limit, offset)
         return {"items": items, "total": total}
 
     # ── vectors ───────────────────────────────
 
     @app.post("/api/v1/vectors/search")
-    async def vector_search(req: VectorSearchReq):
+    async def vector_search(req: VectorSearchReq, ctx: AuthContext = Depends(_get_auth)):
         items = await vec.search(
-            req.user_id, req.embedding,
+            ctx.user_id, req.embedding,
             limit=req.limit, item_type=req.item_type, exclude_type=req.exclude_type,
         )
         return {"items": items}
 
     @app.post("/api/v1/vectors/similar")
-    async def vector_similar(req: VectorSimilarReq):
+    async def vector_similar(req: VectorSimilarReq, ctx: AuthContext = Depends(_get_auth)):
         best, best_sim, candidates = await vec.find_similar(
-            req.user_id, req.embedding, req.item_type, req.threshold, req.limit,
+            ctx.user_id, req.embedding, req.item_type, req.threshold, req.limit,
         )
         return {
             "best_match": best,
@@ -149,19 +143,21 @@ def create_store_app(
         }
 
     @app.post("/api/v1/vectors")
-    async def vector_add(req: VectorAddReq):
-        await vec.add(req.user_id, req.records)
+    async def vector_add(req: VectorAddReq, ctx: AuthContext = Depends(_get_auth)):
+        await vec.add(ctx.user_id, req.records)
         return {"status": "ok"}
 
     @app.patch("/api/v1/vectors/{item_id}/metadata")
-    async def vector_update_metadata(item_id: str, req: VectorUpdateMetaReq):
-        await vec.update_metadata(req.user_id, item_id, req.metadata)
+    async def vector_update_metadata(item_id: str, req: VectorUpdateMetaReq,
+                                     ctx: AuthContext = Depends(_get_auth)):
+        await vec.update_metadata(ctx.user_id, item_id, req.metadata)
         return {"status": "ok"}
 
     @app.get("/api/v1/vectors/all")
-    async def vector_get_all(user_id: str = Query(...), item_type: str | None = Query(None),
-                             limit: int = Query(50), offset: int = Query(0)):
-        items, total = await vec.get_all(user_id, item_type=item_type, limit=limit, offset=offset)
+    async def vector_get_all(item_type: str | None = Query(None),
+                             limit: int = Query(50), offset: int = Query(0),
+                             ctx: AuthContext = Depends(_get_auth)):
+        items, total = await vec.get_all(ctx.user_id, item_type=item_type, limit=limit, offset=offset)
         return {"items": items, "total": total}
 
     @app.get("/api/v1/health")
