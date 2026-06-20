@@ -8,7 +8,7 @@ from typing import ClassVar
 from PIL import Image
 from loguru import logger
 
-from hypogum.observers.base import Observer
+from hypogum.agent.observers.base import Observer
 
 
 class CameraObserver(Observer):

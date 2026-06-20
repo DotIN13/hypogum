@@ -6,8 +6,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from hypogum.db.base import DBStore
-from hypogum.vector.base import VectorStore
+from hypogum.db.relational.base import DBStore
+from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
 
 _CATEGORIES = [

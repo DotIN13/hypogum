@@ -1,9 +1,14 @@
-from hypogum.db.base import DBStore
+"""HTTP db provider used by the agent (and MCP) to reach the standalone `hypogum db` service.
+
+The agent never opens the relational DB or ChromaDB directly; it always talks to the
+`hypogum db` service over HTTP via these clients.
+"""
+
+from hypogum.db.relational.base import DBStore
+from hypogum.db.vector.base import VectorStore
 
 
-class RemoteDBStore(DBStore):
-    """Async HTTP client that delegates to a remote hypogum store server."""
-
+class _HTTPClientMixin:
     def __init__(self, base_url: str):
         self._base = base_url.rstrip("/")
         self._client: object | None = None  # httpx.AsyncClient — lazy import
@@ -37,6 +42,10 @@ class RemoteDBStore(DBStore):
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()  # type: ignore[union-attr]
+
+
+class RemoteDBStore(_HTTPClientMixin, DBStore):
+    """Async HTTP client delegating relational ops to a remote `hypogum db` service."""
 
     # ── observations ──────────────────────────
 
@@ -87,3 +96,48 @@ class RemoteDBStore(DBStore):
     async def get_tips(self, user_id: str, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
         result = await self._get("/tips", limit=limit, offset=offset)
         return result["items"], result["total"]
+
+
+class RemoteVectorStore(_HTTPClientMixin, VectorStore):
+    """Async HTTP client delegating vector ops to a remote `hypogum db` service."""
+
+    async def search(self, user_id: str, embedding: list[float], *,
+                     limit: int = 10, item_type: str | None = None,
+                     exclude_type: str | None = None) -> list[dict]:
+        result = await self._post("/vectors/search", {
+            "embedding": embedding,
+            "limit": limit,
+            "item_type": item_type,
+            "exclude_type": exclude_type,
+        })
+        return result["items"]
+
+    async def find_similar(self, user_id: str, embedding: list[float],
+                           item_type: str, threshold: float = 0.85, limit: int = 5
+                           ) -> tuple[dict | None, float, list[tuple[dict, float]]]:
+        result = await self._post("/vectors/similar", {
+            "embedding": embedding,
+            "item_type": item_type,
+            "threshold": threshold,
+            "limit": limit,
+        })
+        best = result.get("best_match")
+        best_sim = result.get("best_similarity", 0.0)
+        candidates = [(c[0], c[1]) for c in result.get("candidates", [])]
+        return best, best_sim, candidates
+
+    async def add(self, user_id: str, records: list[dict]) -> None:
+        await self._post("/vectors", {"records": records})
+
+    async def update_metadata(self, user_id: str, item_id: str, metadata: dict) -> None:
+        await self._patch(f"/vectors/{item_id}/metadata", {"metadata": metadata})
+
+    async def get_all(self, user_id: str, *,
+                      item_type: str | None = None,
+                      limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+        result = await self._get("/vectors/all",
+                                 item_type=item_type, limit=limit, offset=offset)
+        return result["items"], result["total"]
+
+
+__all__ = ["RemoteDBStore", "RemoteVectorStore"]

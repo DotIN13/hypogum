@@ -3,19 +3,19 @@ from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from pydantic import BaseModel
 from loguru import logger
 
-from hypogum.db.local import LocalDBStore
-from hypogum.vector.local import LocalVectorStore
-from hypogum.auth.base import AuthProvider, AuthContext
+from hypogum.db.relational.base import DBStore
+from hypogum.db.vector.base import VectorStore
+from hypogum.db.auth.base import AuthProvider, AuthContext
 
 
-def create_store_app(
-    db: LocalDBStore,
-    vec: LocalVectorStore,
+def create_db_app(
+    db: DBStore,
+    vec: VectorStore,
     auth: AuthProvider,
 ) -> FastAPI:
-    """Build the FastAPI store HTTP server with /api/v1/ endpoints."""
+    """Build the FastAPI `hypogum db` service with /api/v1/ endpoints."""
 
-    app = FastAPI(title="hypogum-store", version="0.1.0")
+    app = FastAPI(title="hypogum-db", version="0.1.0")
 
     # ── models ─────────────────────────────────
 
@@ -167,7 +167,7 @@ def create_store_app(
     async def startup():
         await db.init()
         await vec.init()
-        logger.info("hypogum-store ready")
+        logger.info("hypogum-db ready")
 
     @app.on_event("shutdown")
     async def shutdown():
@@ -176,8 +176,8 @@ def create_store_app(
     return app
 
 
-def run_store(host: str = "0.0.0.0", port: int = 8055, *, db: LocalDBStore,
-              vec: LocalVectorStore, auth: AuthProvider):
+def run_db_service(host: str = "0.0.0.0", port: int = 8055, *, db: DBStore,
+                   vec: VectorStore, auth: AuthProvider):
     import uvicorn
-    app = create_store_app(db, vec, auth)
+    app = create_db_app(db, vec, auth)
     uvicorn.run(app, host=host, port=port)

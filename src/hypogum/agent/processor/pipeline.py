@@ -4,12 +4,12 @@ import json
 from loguru import logger
 
 from hypogum.config import Config
-from hypogum.db.base import DBStore
-from hypogum.vector.base import VectorStore
+from hypogum.db.relational.base import DBStore
+from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
-from hypogum.utils.notifier import Notifier
-from hypogum.processor.analyzer import process_pending_observations
-from hypogum.processor.tips import generate_proactive_tip
+from hypogum.agent.utils.notifier import Notifier
+from hypogum.agent.processor.analyzer import process_pending_observations
+from hypogum.agent.processor.tips import generate_proactive_tip
 
 
 async def run_processing_cycle(

@@ -6,12 +6,11 @@ import time
 from loguru import logger
 
 from hypogum.config import Config
-from hypogum.db.base import DBStore
-from hypogum.vector.base import VectorStore
+from hypogum.db.relational.base import DBStore
+from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
-from hypogum.processor.analyzer import _wrap_evidence, _merge_evidence
-from hypogum.observers.screen import ScreenObserver
-from hypogum.observers.camera import CameraObserver
+from hypogum.agent.processor.analyzer import _merge_evidence
+from hypogum.agent.observers.screen import ScreenObserver
 
 
 def create_mcp_server(

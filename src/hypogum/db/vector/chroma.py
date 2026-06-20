@@ -5,11 +5,11 @@ import chromadb
 from chromadb import ClientAPI, Collection
 from loguru import logger
 
-from hypogum.vector.base import VectorStore
+from hypogum.db.vector.base import VectorStore
 
 
-class LocalVectorStore(VectorStore):
-    """ChromaDB vector store backed by persistent on-disk database."""
+class ChromaVectorStore(VectorStore):
+    """ChromaDB vector store backed by persistent on-disk database (local to the db service)."""
 
     def __init__(self, chroma_path: str | Path):
         self._path = Path(chroma_path)
@@ -21,13 +21,13 @@ class LocalVectorStore(VectorStore):
     async def init(self) -> None:
         if self._client is not None:
             return
-        logger.info("LocalVectorStore: connecting persistent {}", self._path)
+        logger.info("ChromaVectorStore: connecting persistent {}", self._path)
         self._client = chromadb.PersistentClient(path=str(self._path))
         try:
             self._default_collection = self._client.get_collection("events")
         except Exception:
             self._default_collection = self._client.create_collection("events")
-        logger.info("LocalVectorStore: ready ({} items)", self._default_collection.count())
+        logger.info("ChromaVectorStore: ready ({} items)", self._default_collection.count())
 
     async def _ensure_collection(self, user_id: str) -> Collection:
         await self.init()
@@ -129,14 +129,14 @@ class LocalVectorStore(VectorStore):
 
         async with self._write_lock:
             coll.add(ids=ids, embeddings=embeddings, metadatas=metadatas)
-        logger.info("LocalVectorStore: added {} items", len(records))
+        logger.info("ChromaVectorStore: added {} items", len(records))
 
     async def update_metadata(self, user_id: str, item_id: str, metadata: dict) -> None:
         await self.init()
         coll = await self._ensure_collection(user_id)
         async with self._write_lock:
             coll.update(ids=[item_id], metadatas=[metadata])
-        logger.debug("LocalVectorStore: updated metadata for {}", item_id)
+        logger.debug("ChromaVectorStore: updated metadata for {}", item_id)
 
     async def get_all(self, user_id: str, *,
                       item_type: str | None = None,

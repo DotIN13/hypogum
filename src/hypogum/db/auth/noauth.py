@@ -1,4 +1,4 @@
-from hypogum.auth.base import AuthProvider, AuthContext
+from hypogum.db.auth.base import AuthProvider, AuthContext
 
 
 class NoAuthProvider(AuthProvider):

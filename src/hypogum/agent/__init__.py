@@ -3,13 +3,13 @@ import asyncio
 from loguru import logger
 
 from hypogum.config import Config
-from hypogum.db.base import DBStore
-from hypogum.vector.base import VectorStore
+from hypogum.db.relational.base import DBStore
+from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
-from hypogum.observers.base import Observer
-from hypogum.utils.notifier import Notifier
-from hypogum.utils.activity_detector import PauseGate
-from hypogum.processor.pipeline import run_processing_loop
+from hypogum.agent.observers.base import Observer
+from hypogum.agent.utils.notifier import Notifier
+from hypogum.agent.utils.activity_detector import PauseGate
+from hypogum.agent.processor.pipeline import run_processing_loop
 
 
 async def run_agent(

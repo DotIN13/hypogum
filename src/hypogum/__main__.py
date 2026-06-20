@@ -1,30 +1,25 @@
 import argparse
 import asyncio
-import signal
 
 from loguru import logger
 
 from hypogum.config import Config
-from hypogum.db.local import LocalDBStore
-from hypogum.vector.local import LocalVectorStore
 
+
+# ── providers / factories ────────────────────
 
 def _make_db(config: Config):
-    if config.db_mode == "remote":
-        from hypogum.db.remote import RemoteDBStore
-        assert config.db_url, "HYPOGUM_DB_URL required for remote db mode"
-        return RemoteDBStore(config.db_url)
-    db = LocalDBStore(config.data_dir / "app.db")
-    return db
+    """Agent/MCP relational provider: always HTTP to the `hypogum db` service."""
+    from hypogum.agent.db import RemoteDBStore
+    assert config.db_url, "HYPOGUM_DB_URL required (the `hypogum db` service URL)"
+    return RemoteDBStore(config.db_url)
 
 
 def _make_vec(config: Config):
-    if config.vec_mode == "remote":
-        from hypogum.vector.remote import RemoteVectorStore
-        assert config.vec_url, "HYPOGUM_VEC_URL required for remote vector mode"
-        return RemoteVectorStore(config.vec_url)
-    vec = LocalVectorStore(config.data_dir / "chroma.db")
-    return vec
+    """Agent/MCP vector provider: always HTTP to the `hypogum db` service."""
+    from hypogum.agent.db import RemoteVectorStore
+    assert config.db_url, "HYPOGUM_DB_URL required (the `hypogum db` service URL)"
+    return RemoteVectorStore(config.db_url)
 
 
 def _make_llm(config: Config):
@@ -75,10 +70,10 @@ def _make_llm(config: Config):
 
 def _make_auth(config: Config):
     if config.auth_provider == "noauth":
-        from hypogum.auth.noauth import NoAuthProvider
+        from hypogum.db.auth.noauth import NoAuthProvider
         return NoAuthProvider(user_id="default")
     elif config.auth_provider == "jwt":
-        from hypogum.auth.jwt import JWTAuthProvider
+        from hypogum.db.auth.jwt import JWTAuthProvider
         return JWTAuthProvider(
             secret=config.auth_jwt_secret,
             algorithm=config.auth_jwt_algorithm,
@@ -87,7 +82,7 @@ def _make_auth(config: Config):
             audience=config.auth_jwt_audience,
         )
     elif config.auth_provider == "oauth2":
-        from hypogum.auth.oauth2 import OAuth2Provider
+        from hypogum.db.auth.oauth2 import OAuth2Provider
         assert config.auth_oauth2_introspection_url, "AUTH_OAUTH2_INTROSPECTION_URL required"
         assert config.auth_oauth2_client_id, "AUTH_OAUTH2_CLIENT_ID required"
         assert config.auth_oauth2_client_secret, "AUTH_OAUTH2_CLIENT_SECRET required"
@@ -102,9 +97,9 @@ def _make_auth(config: Config):
 
 
 def _make_observers(config: Config):
-    from hypogum.observers.screen import ScreenObserver
-    from hypogum.observers.camera import CameraObserver
-    from hypogum.utils.window_detector import create_window_detector
+    from hypogum.agent.observers.screen import ScreenObserver
+    from hypogum.agent.observers.camera import CameraObserver
+    from hypogum.agent.utils.window_detector import create_window_detector
 
     window_detector = create_window_detector() if config.observe_detect_windows else None
 
@@ -127,14 +122,14 @@ def _make_observers(config: Config):
 def _make_notifier(config: Config):
     if not config.notify_on_tips:
         return None
-    from hypogum.utils.notifier import create_notifier
+    from hypogum.agent.utils.notifier import create_notifier
     return create_notifier()
 
 
 def _make_pause_gate(config: Config):
     if not (config.pause_when_locked or config.pause_when_idle):
         return None
-    from hypogum.utils.activity_detector import create_activity_detector, PauseGate
+    from hypogum.agent.utils.activity_detector import create_activity_detector, PauseGate
     return PauseGate(
         create_activity_detector(),
         pause_when_locked=config.pause_when_locked,
@@ -145,23 +140,23 @@ def _make_pause_gate(config: Config):
 
 # ── CLI commands ─────────────────────────────
 
-def cmd_store(args):
+def cmd_db(args):
+    """Run the standalone db service: relational (local/remote via DSN) + local ChromaDB."""
     config = Config.from_env()
-    db = LocalDBStore(config.data_dir / "app.db")
-    vec = LocalVectorStore(config.data_dir / "chroma.db")
+
+    from hypogum.db.relational.engine import SQLAlchemyDBStore
+    from hypogum.db.vector.chroma import ChromaVectorStore
+    from hypogum.db.server import run_db_service
+
+    assert config.db_dsn, "HYPOGUM_DB_DSN could not be resolved"
+    db = SQLAlchemyDBStore(config.db_dsn)
+    vec = ChromaVectorStore(config.chroma_dir)
     auth = _make_auth(config)
 
-    from hypogum.store import run_store
-    host = args.host if args.host is not None else config.store_host
-    port = args.port if args.port is not None else config.store_port
-    run_store(host, port, db=db, vec=vec, auth=auth)
-
-
-async def _init_locals_async(db, vec):
-    if isinstance(db, LocalDBStore):
-        await db.init()
-    if isinstance(vec, LocalVectorStore):
-        await vec.init()
+    host = args.host if args.host is not None else config.db_host
+    port = args.port if args.port is not None else config.db_port
+    logger.info("Starting `hypogum db` (dsn={}, chroma={})", config.db_dsn, config.chroma_dir)
+    run_db_service(host, port, db=db, vec=vec, auth=auth)
 
 
 def cmd_agent(args):
@@ -176,7 +171,6 @@ def cmd_agent(args):
     from hypogum.agent import run_agent
 
     async def _run():
-        await _init_locals_async(db, vec)
         await run_agent(config, db, vec, llm, observers, notifier=notifier,
                         pause_gate=pause_gate)
 
@@ -191,11 +185,6 @@ def cmd_mcp(args):
     db = _make_db(config)
     vec = _make_vec(config)
     llm = _make_llm(config)
-
-    async def _init():
-        await _init_locals_async(db, vec)
-
-    asyncio.run(_init())
 
     from hypogum.mcp_server import create_mcp_server
     mcp = create_mcp_server(config, db, vec, llm, config.user_id)
@@ -218,11 +207,11 @@ def main():
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_store = sub.add_parser("store", help="Start data store HTTP server")
-    p_store.add_argument("--host", default=None)
-    p_store.add_argument("--port", type=int, default=None)
+    p_db = sub.add_parser("db", help="Start the standalone db service (relational + ChromaDB)")
+    p_db.add_argument("--host", default=None)
+    p_db.add_argument("--port", type=int, default=None)
 
-    p_agent = sub.add_parser("agent", help="Run observer -> process -> tip loop")
+    sub.add_parser("agent", help="Run observer -> process -> tip loop")
 
     p_mcp = sub.add_parser("mcp", help="Start MCP endpoint")
     p_mcp.add_argument("--transport", choices=["stdio", "http"], default="stdio")
@@ -231,8 +220,8 @@ def main():
 
     args = parser.parse_args()
 
-    if args.command == "store":
-        cmd_store(args)
+    if args.command == "db":
+        cmd_db(args)
     elif args.command == "agent":
         cmd_agent(args)
     elif args.command == "mcp":

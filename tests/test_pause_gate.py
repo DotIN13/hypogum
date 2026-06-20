@@ -1,6 +1,6 @@
 import asyncio
 
-from hypogum.utils.activity_detector import PauseGate
+from hypogum.agent.utils.activity_detector import PauseGate
 
 
 class FakeDetector:

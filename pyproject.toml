@@ -10,11 +10,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-store = ["fastapi>=0.115", "uvicorn[standard]", "python-jose[cryptography]", "httpx>=0.27"]
-agent = ["mss", "opencv-python", "pillow>=10.0"]
+db = ["fastapi>=0.115", "uvicorn[standard]", "python-jose[cryptography]", "httpx>=0.27", "sqlalchemy[asyncio]>=2.0", "aiosqlite>=0.20", "asyncpg>=0.29", "chromadb>=0.5"]
+agent = ["mss", "opencv-python", "pillow>=10.0", "httpx>=0.27"]
 llm = ["google-genai>=1.0", "openai>=1.0", "anthropic>=0.34"]
-mcp = ["mcp>=1.0"]
-all = ["hypogum[store,agent,llm,mcp]", "aiosqlite>=0.20", "chromadb>=0.5"]
+mcp = ["mcp>=1.0", "httpx>=0.27"]
+all = ["hypogum[db,agent,llm,mcp]"]
 windows = ["pywin32>=310"]
 dev = ["ruff>=0.6", "pytest>=8.0"]
 

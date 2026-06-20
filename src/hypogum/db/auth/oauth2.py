@@ -3,7 +3,7 @@ import time
 from fastapi import HTTPException, Request
 from loguru import logger
 
-from hypogum.auth.base import AuthProvider, AuthContext
+from hypogum.db.auth.base import AuthProvider, AuthContext
 
 
 class OAuth2Provider(AuthProvider):

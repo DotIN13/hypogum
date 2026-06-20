@@ -8,8 +8,8 @@ from typing import ClassVar
 from PIL import Image
 from loguru import logger
 
-from hypogum.observers.base import Observer
-from hypogum.utils.image_dedup import dhash, hamming_distance
+from hypogum.agent.observers.base import Observer
+from hypogum.agent.utils.image_dedup import dhash, hamming_distance
 
 
 class ScreenObserver(Observer):

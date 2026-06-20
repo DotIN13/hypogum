@@ -43,7 +43,7 @@ def _resolve_prompts_dir() -> Path:
         prompts_dir = Path(env_prompts_dir).resolve()
         source = "HYPOGUM_PROMPTS_DIR"
     else:
-        prompts_dir = (Path(__file__).resolve().parent / "prompts").resolve()
+        prompts_dir = (Path(__file__).resolve().parent / "agent" / "prompts").resolve()
         source = "default"
     logger.info("Using prompts dir {} (source: {})", prompts_dir, source)
     return prompts_dir
@@ -51,12 +51,15 @@ def _resolve_prompts_dir() -> Path:
 
 @dataclass(slots=True)
 class Config:
-    db_mode: Literal["local", "remote"] = "remote"
-    db_url: str | None = "http://localhost:8055"
-    vec_mode: Literal["local", "remote"] = "remote"
-    vec_url: str | None = "http://localhost:8055"
-    store_host: str = "0.0.0.0"
-    store_port: int = 8055
+    # ── agent / mcp: HTTP db provider target (the `hypogum db` service) ──
+    db_url: str = "http://localhost:8055"
+
+    # ── `hypogum db` service backend ──
+    db_dsn: str | None = None                 # relational DSN; None -> local sqlite under data_dir
+    chroma_dir: Path | None = None            # local ChromaDB dir; None -> data_dir/chroma.db
+    db_host: str = "0.0.0.0"
+    db_port: int = 8055
+
     data_dir: Path = field(default_factory=_resolve_data_dir)
     prompts_dir: Path = field(default_factory=_resolve_prompts_dir)
 
@@ -109,14 +112,22 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
+        data_dir = _resolve_data_dir()
+
+        db_dsn = os.environ.get("HYPOGUM_DB_DSN", "").strip() or None
+        if db_dsn is None:
+            db_dsn = f"sqlite+aiosqlite:///{(data_dir / 'app.db').as_posix()}"
+
+        chroma_env = os.environ.get("HYPOGUM_CHROMA_DIR", "").strip()
+        chroma_dir = Path(chroma_env).resolve() if chroma_env else (data_dir / "chroma.db")
+
         return cls(
-            db_mode=os.environ.get("HYPOGUM_DB_MODE", "remote"),  # type: ignore[arg-type]
             db_url=os.environ.get("HYPOGUM_DB_URL") or "http://localhost:8055",
-            vec_mode=os.environ.get("HYPOGUM_VEC_MODE", "remote"),  # type: ignore[arg-type]
-            vec_url=os.environ.get("HYPOGUM_VEC_URL") or "http://localhost:8055",
-            store_host=os.environ.get("HYPOGUM_STORE_HOST", "0.0.0.0"),
-            store_port=int(os.environ.get("HYPOGUM_STORE_PORT", "8055")),
-            data_dir=_resolve_data_dir(),
+            db_dsn=db_dsn,
+            chroma_dir=chroma_dir,
+            db_host=os.environ.get("HYPOGUM_DB_HOST", "0.0.0.0"),
+            db_port=int(os.environ.get("HYPOGUM_DB_PORT", "8055")),
+            data_dir=data_dir,
             prompts_dir=_resolve_prompts_dir(),
 
             llm_provider=os.environ.get("HYPOGUM_LLM_PROVIDER", "gemini"),  # type: ignore[arg-type]

@@ -14,22 +14,37 @@ python -m venv .venv
 cp .env.example .env
 # Edit .env — fill in GOOGLE_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY)
 
-# Run the background agent
+# Start the standalone db service (relational + ChromaDB)
+hypogum db
+
+# Run the background agent (connects to the db service over HTTP)
 hypogum agent
 ```
 
 ## Architecture
 
 ```
-hypogum agent
-├── observers/     ScreenObserver (mss), CameraObserver (cv2)
-├── processor/     analyzer.py → tips.py → pipeline.py
-├── db/            DBStore: LocalDBStore (aiosqlite) | RemoteDBStore (httpx)
-├── vector/        VectorStore: LocalVectorStore (chromadb) | RemoteVectorStore
-├── llm/           LLMProvider: Gemini | OpenAI | Anthropic
-├── auth/          AuthProvider: NoAuth | JWT | OAuth2
-└── utils/         Notifier (desktop notifications), WindowDetector
+hypogum/
+├── agent/             Background agent runtime
+│   ├── __init__.py    run_agent() — observer + processing loops
+│   ├── db.py          HTTP db provider (RemoteDBStore + RemoteVectorStore → `hypogum db`)
+│   ├── observers/     ScreenObserver (mss), CameraObserver (cv2)
+│   ├── processor/     analyzer.py → tips.py → pipeline.py
+│   ├── prompts/       analysis + proactive prompt templates
+│   └── utils/         Notifier, WindowDetector, activity/idle detection, image dedup
+├── db/                Standalone `hypogum db` service + data layer
+│   ├── server.py      FastAPI service (`/api/v1/`)
+│   ├── relational/    DBStore: SQLAlchemyDBStore (local SQLite | remote Postgres/MySQL via DSN)
+│   ├── vector/        VectorStore: ChromaVectorStore (local ChromaDB)
+│   └── auth/          AuthProvider: NoAuth | JWT | OAuth2
+├── llm/               LLMProvider: Gemini | OpenAI | Anthropic
+└── mcp_server.py      MCP endpoint (uses the agent's HTTP db provider)
 ```
+
+The agent and MCP endpoint never touch the database directly — they always talk to
+the standalone `hypogum db` service over HTTP via the provider in `agent/db.py`. The
+`hypogum db` service owns the relational backend (local SQLite or a remote
+Postgres/MySQL via DSN) and a local ChromaDB.
 
 ### Observer → Process → Tip flow
 
@@ -56,8 +71,8 @@ CameraObserver ─┘
 
 | Command | Purpose |
 |---|---|
-| `hypogum store` | Start remote data store HTTP server (FastAPI, `/api/v1/`) |
-| `hypogum agent` | Run observer → process → tip background loop |
+| `hypogum db` | Start the standalone db service: relational store (local SQLite or remote Postgres/MySQL via DSN) + local ChromaDB (FastAPI, `/api/v1/`) |
+| `hypogum agent` | Run observer → process → tip background loop (connects to `hypogum db` over HTTP) |
 | `hypogum mcp --transport stdio` | MCP endpoint for Claude Desktop / VS Code |
 | `hypogum mcp --transport http --port 8080` | MCP endpoint for remote AI agents |
 
@@ -89,8 +104,9 @@ All settings via environment variables (see `.env.example`). Key ones:
 | `HYPOGUM_PAUSE_WHEN_LOCKED` | `true` | Pause observing + processing while the workstation is locked |
 | `HYPOGUM_PAUSE_WHEN_IDLE` | `false` | Pause once there's no user input for `HYPOGUM_IDLE_THRESHOLD` seconds |
 | `HYPOGUM_IDLE_THRESHOLD` | `300` | Idle seconds before pausing |
-| `HYPOGUM_DB_MODE` | `local` | `local` (SQLite) or `remote` (HTTP) |
-| `HYPOGUM_VEC_MODE` | `local` | `local` (ChromaDB) or `remote` (HTTP) |
+| `HYPOGUM_DB_URL` | `http://localhost:8055` | URL of the `hypogum db` service the agent/MCP connect to |
+| `HYPOGUM_DB_DSN` | `sqlite+aiosqlite:///<data>/app.db` | Relational DSN for `hypogum db`: local SQLite or remote Postgres/MySQL |
+| `HYPOGUM_CHROMA_DIR` | `<data>/chroma.db` | Local ChromaDB directory used by `hypogum db` |
 
 ### Idle / lock pausing
 
@@ -116,10 +132,10 @@ smaller on-screen changes. Set `HYPOGUM_SCREEN_DEDUP_ENABLED=false` to keep ever
 
 ## Pluggable abstractions
 
-| Layer | ABC | Local impl | Remote impl |
+| Layer | ABC | Service impl (in `hypogum db`) | Agent provider (HTTP client) |
 |---|---|---|---|
-| Relational store | `DBStore` | `LocalDBStore` (aiosqlite) | `RemoteDBStore` (httpx) |
-| Vector store | `VectorStore` | `LocalVectorStore` (chromadb) | `RemoteVectorStore` (httpx) |
+| Relational store | `DBStore` | `SQLAlchemyDBStore` (SQLite local / Postgres/MySQL remote via DSN) | `RemoteDBStore` (httpx, in `agent/db.py`) |
+| Vector store | `VectorStore` | `ChromaVectorStore` (chromadb, local) | `RemoteVectorStore` (httpx, in `agent/db.py`) |
 | LLM provider | `LLMProvider` | `GeminiProvider` / `OpenAIProvider` / `AnthropicProvider` | — |
 | Auth provider | `AuthProvider` | `NoAuthProvider` / `JWTAuthProvider` / `OAuth2Provider` | — |
 | Observer | `Observer` | `ScreenObserver` (mss) / `CameraObserver` (cv2) | — |
@@ -136,6 +152,6 @@ smaller on-screen changes. Set `HYPOGUM_SCREEN_DEDUP_ENABLED=false` to keep ever
 ```bash
 pip install -e ".[all]"        # Everything
 pip install -e ".[agent,llm]"  # Just the agent + LLM
-pip install -e ".[store]"      # Just the store server
+pip install -e ".[db]"         # Just the db service
 pip install -e ".[mcp,llm]"    # Just the MCP endpoint
 ```

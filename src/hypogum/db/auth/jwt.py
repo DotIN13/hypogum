@@ -2,7 +2,7 @@ from fastapi import HTTPException, Request
 from jose import jwt, JWTError
 from loguru import logger
 
-from hypogum.auth.base import AuthProvider, AuthContext
+from hypogum.db.auth.base import AuthProvider, AuthContext
 
 
 class JWTAuthProvider(AuthProvider):

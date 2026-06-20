@@ -2,7 +2,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from hypogum.utils.image_dedup import dhash, hamming_distance
+from hypogum.agent.utils.image_dedup import dhash, hamming_distance
 
 ASSETS = Path(__file__).parent / "assets"
 PROD_HASH_SIZE = 16
