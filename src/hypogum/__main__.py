@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import signal
-import sys
 
 from loguru import logger
 
@@ -129,24 +128,18 @@ def _make_notifier(config: Config):
     return create_notifier()
 
 
-def _is_local(obj) -> bool:
-    return isinstance(obj, (LocalDBStore, LocalVectorStore))
-
-
 # ── CLI commands ─────────────────────────────
 
 def cmd_store(args):
     config = Config.from_env()
-    db = _make_db(config)
-    vec = _make_vec(config)
+    db = LocalDBStore(str(config.data_dir / "app.db"))
+    vec = LocalVectorStore(str(config.data_dir / "chroma.db"))
     auth = _make_auth(config)
 
-    if not _is_local(db) or not _is_local(vec):
-        logger.error("store subcommand requires local db/vec modes")
-        sys.exit(1)
-
     from hypogum.store import run_store
-    run_store(args.host, args.port, db=db, vec=vec, auth=auth)
+    host = args.host if args.host is not None else config.store_host
+    port = args.port if args.port is not None else config.store_port
+    run_store(host, port, db=db, vec=vec, auth=auth)
 
 
 async def _init_locals_async(db, vec):
@@ -209,8 +202,8 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     p_store = sub.add_parser("store", help="Start data store HTTP server")
-    p_store.add_argument("--host", default="0.0.0.0")
-    p_store.add_argument("--port", type=int, default=8000)
+    p_store.add_argument("--host", default=None)
+    p_store.add_argument("--port", type=int, default=None)
 
     p_agent = sub.add_parser("agent", help="Run observer -> process -> tip loop")
 

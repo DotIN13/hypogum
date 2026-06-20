@@ -181,7 +181,7 @@ def create_store_app(
     return app
 
 
-def run_store(host: str = "0.0.0.0", port: int = 8000, *, db: LocalDBStore,
+def run_store(host: str = "0.0.0.0", port: int = 8055, *, db: LocalDBStore,
               vec: LocalVectorStore, auth: AuthProvider):
     import uvicorn
     app = create_store_app(db, vec, auth)

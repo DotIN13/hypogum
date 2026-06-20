@@ -10,7 +10,7 @@ class GeminiProvider(LLMProvider):
     """Gemini LLM via google-genai SDK."""
 
     def __init__(self, *, api_key: str,
-                 model: str = "gemini-3.5-flash-lite",
+                 model: str = "gemini-3.1-flash-lite",
                  embedding_model: str = "gemini-embedding-2"):
         self.model = model
         self.embedding_model = embedding_model
@@ -41,6 +41,7 @@ class GeminiProvider(LLMProvider):
                 ))
 
         config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
             response_mime_type="application/json",
             max_output_tokens=max_tokens,
         )
