@@ -7,12 +7,12 @@ from dotenv import load_dotenv
 from loguru import logger
 
 
-def _find_env() -> str | None:
+def _find_env() -> Path | None:
     for candidate in [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"),
-        os.path.join(os.getcwd(), ".env"),
+        Path(__file__).resolve().parent.parent / ".env",
+        Path.cwd() / ".env",
     ]:
-        if os.path.exists(candidate):
+        if candidate.exists():
             return candidate
     return None
 
@@ -20,9 +20,9 @@ def _find_env() -> str | None:
 _env = _find_env()
 if _env:
     load_dotenv(_env)
-    logger.info("Loaded .env from {}", os.path.abspath(_env))
+    logger.info("Loaded .env from {}", _env)
 else:
-    logger.info("No .env file found (cwd={})", os.getcwd())
+    logger.info("No .env file found (cwd={})", Path.cwd())
 
 
 def _resolve_data_dir() -> Path:
@@ -31,7 +31,7 @@ def _resolve_data_dir() -> Path:
         data_dir = Path(env_data_dir).resolve()
         source = "HYPOGUM_DATA_DIR"
     else:
-        data_dir = Path(os.path.join(os.path.dirname(__file__), "..", "..", "data")).resolve()
+        data_dir = (Path(__file__).resolve().parent.parent / "data").resolve()
         source = "default"
     logger.info("Using data dir {} (source: {})", data_dir, source)
     return data_dir
@@ -43,13 +43,13 @@ def _resolve_prompts_dir() -> Path:
         prompts_dir = Path(env_prompts_dir).resolve()
         source = "HYPOGUM_PROMPTS_DIR"
     else:
-        prompts_dir = (Path(os.path.dirname(__file__)) / "prompts").resolve()
+        prompts_dir = (Path(__file__).resolve().parent / "prompts").resolve()
         source = "default"
     logger.info("Using prompts dir {} (source: {})", prompts_dir, source)
     return prompts_dir
 
 
-@dataclass
+@dataclass(slots=True)
 class Config:
     db_mode: Literal["local", "remote"] = "remote"
     db_url: str | None = "http://localhost:8055"

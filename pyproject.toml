@@ -2,7 +2,7 @@
 name = "hypogum"
 version = "0.1.0"
 description = "Standalone background agent with observer, processor, tip engine, and MCP endpoint"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "loguru>=0.7",
     "python-dotenv>=1.0",
@@ -16,6 +16,7 @@ llm = ["google-genai>=1.0", "openai>=1.0", "anthropic>=0.34"]
 mcp = ["mcp>=1.0"]
 all = ["hypogum[store,agent,llm,mcp]", "aiosqlite>=0.20", "chromadb>=0.5"]
 windows = ["pywin32>=310"]
+dev = ["ruff>=0.6", "pytest>=8.0"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -23,6 +24,13 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
 
 [project.scripts]
 hypogum = "hypogum.__main__:main"

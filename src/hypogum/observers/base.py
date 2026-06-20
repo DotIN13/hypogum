@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import ClassVar
 
 
-@dataclass
+@dataclass(slots=True)
 class ObserverCapture:
     source_type: str
     timestamp: str
@@ -45,9 +45,10 @@ class Observer(ABC):
                                max_width=max_width, quality=quality)
         while not stop_event.is_set():
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=self.interval)
+                async with asyncio.timeout(self.interval):
+                    await stop_event.wait()
                 break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if pause_gate and await pause_gate.is_paused():
                     continue
                 await self.observe(db, user_id, data_dir,

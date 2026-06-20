@@ -14,7 +14,7 @@ def _make_db(config: Config):
         from hypogum.db.remote import RemoteDBStore
         assert config.db_url, "HYPOGUM_DB_URL required for remote db mode"
         return RemoteDBStore(config.db_url)
-    db = LocalDBStore(str(config.data_dir / "app.db"))
+    db = LocalDBStore(config.data_dir / "app.db")
     return db
 
 
@@ -23,7 +23,7 @@ def _make_vec(config: Config):
         from hypogum.vector.remote import RemoteVectorStore
         assert config.vec_url, "HYPOGUM_VEC_URL required for remote vector mode"
         return RemoteVectorStore(config.vec_url)
-    vec = LocalVectorStore(str(config.data_dir / "chroma.db"))
+    vec = LocalVectorStore(config.data_dir / "chroma.db")
     return vec
 
 
@@ -147,8 +147,8 @@ def _make_pause_gate(config: Config):
 
 def cmd_store(args):
     config = Config.from_env()
-    db = LocalDBStore(str(config.data_dir / "app.db"))
-    vec = LocalVectorStore(str(config.data_dir / "chroma.db"))
+    db = LocalDBStore(config.data_dir / "app.db")
+    vec = LocalVectorStore(config.data_dir / "chroma.db")
     auth = _make_auth(config)
 
     from hypogum.store import run_store

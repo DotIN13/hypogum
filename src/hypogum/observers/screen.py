@@ -55,7 +55,7 @@ class ScreenObserver(Observer):
             ):
                 distance = hamming_distance(current_hash, self._prev_hash)
                 if distance <= self._dedup_threshold:
-                    logger.debug(
+                    logger.info(
                         "[ScreenObserver] discarded near-duplicate (hamming={} <= {})",
                         distance, self._dedup_threshold,
                     )

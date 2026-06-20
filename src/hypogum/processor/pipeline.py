@@ -102,9 +102,10 @@ async def run_processing_loop(
     """Run processing cycles on interval until stop_event is set."""
     while not stop_event.is_set():
         try:
-            await asyncio.wait_for(stop_event.wait(), timeout=config.process_interval)
+            async with asyncio.timeout(config.process_interval):
+                await stop_event.wait()
             break
-        except asyncio.TimeoutError:
+        except TimeoutError:
             if pause_gate and await pause_gate.is_paused():
                 continue
             try:

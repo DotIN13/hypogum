@@ -1,8 +1,8 @@
 import asyncio
 import json
-import os
 from datetime import timezone as tz
 import datetime
+from pathlib import Path
 
 import aiosqlite
 from loguru import logger
@@ -13,13 +13,13 @@ from hypogum.db.base import DBStore
 class LocalDBStore(DBStore):
     """Async SQLite data store — direct file access."""
 
-    def __init__(self, db_path: str):
-        self._path = db_path
+    def __init__(self, db_path: str | Path):
+        self._path = Path(db_path)
         self._conn: aiosqlite.Connection | None = None
         self._write_lock = asyncio.Lock()
 
     async def init(self) -> None:
-        os.makedirs(os.path.dirname(self._path), exist_ok=True)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = await aiosqlite.connect(self._path)
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")

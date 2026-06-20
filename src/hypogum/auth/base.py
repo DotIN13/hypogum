@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(slots=True)
 class AuthContext:
     """Authenticated user identity extracted from a request."""
     user_id: str

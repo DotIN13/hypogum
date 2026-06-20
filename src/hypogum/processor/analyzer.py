@@ -1,5 +1,4 @@
 import json
-import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -51,7 +50,7 @@ def _merge_evidence(existing_json: str | None, new_json: str, max_entries: int =
     return json.dumps(merged, ensure_ascii=False)
 
 
-@dataclass
+@dataclass(slots=True)
 class _ItemEntry:
     """A single analysis item from the LLM response, ready for embedding and ingestion.
     category is the plural array key (e.g. 'personalities'),
@@ -351,7 +350,7 @@ async def process_pending_observations(
     )
 
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    raw_transcripts = str([os.path.basename(p) for p in image_paths])
+    raw_transcripts = str([Path(p).name for p in image_paths])
 
     obs_ids = [r["id"] for r in rows]
     await db.mark_observations_processed(user_id, obs_ids)

@@ -1,5 +1,4 @@
 import json
-import os
 from fastapi import FastAPI, HTTPException, Request, Query, Depends
 from pydantic import BaseModel
 from loguru import logger

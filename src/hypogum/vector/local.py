@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import chromadb
 from chromadb import ClientAPI, Collection
@@ -10,8 +11,8 @@ from hypogum.vector.base import VectorStore
 class LocalVectorStore(VectorStore):
     """ChromaDB vector store backed by persistent on-disk database."""
 
-    def __init__(self, chroma_path: str):
-        self._path = chroma_path
+    def __init__(self, chroma_path: str | Path):
+        self._path = Path(chroma_path)
         self._client: ClientAPI | None = None
         self._write_lock = asyncio.Lock()
         self._collections: dict[str, Collection] = {}
@@ -21,7 +22,7 @@ class LocalVectorStore(VectorStore):
         if self._client is not None:
             return
         logger.info("LocalVectorStore: connecting persistent {}", self._path)
-        self._client = chromadb.PersistentClient(path=self._path)
+        self._client = chromadb.PersistentClient(path=str(self._path))
         try:
             self._default_collection = self._client.get_collection("events")
         except Exception:

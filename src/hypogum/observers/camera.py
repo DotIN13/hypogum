@@ -16,12 +16,6 @@ class CameraObserver(Observer):
     source_type: ClassVar[str] = "camera"
     default_interval: ClassVar[int] = 120
 
-    def __init__(self, *, interval: int | None = None):
-        super().__init__(interval=interval)
-
-    def __init__(self, *, interval: int | None = None):
-        super().__init__(interval=interval)
-
     async def observe(
         self, db, user_id: str, data_dir: Path, *,
         max_width: int = 1920, quality: int = 85,
