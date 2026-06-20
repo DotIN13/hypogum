@@ -82,9 +82,37 @@ All settings via environment variables (see `.env.example`). Key ones:
 | `HYPOGUM_LLM_PROVIDER` | `gemini` | `gemini`, `openai`, or `anthropic` |
 | `GOOGLE_API_KEY` | — | API key for Gemini |
 | `HYPOGUM_OBSERVE_SCREEN_INTERVAL` | `60` | Seconds between screen captures |
+| `HYPOGUM_SCREEN_DEDUP_ENABLED` | `true` | Discard a screenshot too similar to the previous saved one |
+| `HYPOGUM_SCREEN_DEDUP_THRESHOLD` | `10` | Max dHash Hamming distance treated as a duplicate (0..hash_size²) |
+| `HYPOGUM_SCREEN_DEDUP_HASH_SIZE` | `16` | dHash grid size; higher = more sensitive to small on-screen changes |
 | `HYPOGUM_PROCESS_INTERVAL` | `300` | Seconds between analysis cycles |
+| `HYPOGUM_PAUSE_WHEN_LOCKED` | `true` | Pause observing + processing while the workstation is locked |
+| `HYPOGUM_PAUSE_WHEN_IDLE` | `false` | Pause once there's no user input for `HYPOGUM_IDLE_THRESHOLD` seconds |
+| `HYPOGUM_IDLE_THRESHOLD` | `300` | Idle seconds before pausing |
 | `HYPOGUM_DB_MODE` | `local` | `local` (SQLite) or `remote` (HTTP) |
 | `HYPOGUM_VEC_MODE` | `local` | `local` (ChromaDB) or `remote` (HTTP) |
+
+### Idle / lock pausing
+
+When the system is locked or has been idle past `HYPOGUM_IDLE_THRESHOLD`, the agent
+skips screen/camera capture *and* the LLM analysis/tip cycle (timers keep running, so
+it resumes automatically once you're active). Detection is dependency-free:
+
+| OS | Idle | Lock |
+|---|---|---|
+| Windows | `GetLastInputInfo` (ctypes) | `OpenInputDesktop` (ctypes) |
+| macOS | `ioreg` `HIDIdleTime` | `Quartz` if `pyobjc` is installed, else covered by idle |
+| Linux | `xprintidle` (X11; n/a on Wayland) | `gdbus` GNOME/freedesktop `ScreenSaver`, else covered by idle |
+
+Where idle can't be measured (e.g. Wayland), only lock pausing applies.
+
+### Screen deduplication
+
+Each screenshot is fingerprinted with a dHash (`HYPOGUM_SCREEN_DEDUP_HASH_SIZE`×N
+grid) and compared to the previously saved one; if the Hamming distance is
+`<= HYPOGUM_SCREEN_DEDUP_THRESHOLD` the frame is discarded before any encode/disk/DB
+work, so static screens don't pile up redundant captures. A larger hash size detects
+smaller on-screen changes. Set `HYPOGUM_SCREEN_DEDUP_ENABLED=false` to keep every frame.
 
 ## Pluggable abstractions
 

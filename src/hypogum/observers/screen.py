@@ -9,6 +9,7 @@ from PIL import Image
 from loguru import logger
 
 from hypogum.observers.base import Observer
+from hypogum.utils.image_dedup import dhash, hamming_distance
 
 
 class ScreenObserver(Observer):
@@ -17,9 +18,17 @@ class ScreenObserver(Observer):
     source_type: ClassVar[str] = "screen"
     default_interval: ClassVar[int] = 60
 
-    def __init__(self, window_detector=None, *, interval: int | None = None):
+    def __init__(
+        self, window_detector=None, *, interval: int | None = None,
+        dedup_enabled: bool = True, dedup_threshold: int = 10,
+        dedup_hash_size: int = 16,
+    ):
         super().__init__(interval=interval)
         self._window_detector = window_detector
+        self._dedup_enabled = dedup_enabled
+        self._dedup_threshold = dedup_threshold
+        self._dedup_hash_size = dedup_hash_size
+        self._prev_hash: int | None = None
 
     async def observe(
         self, db, user_id: str, data_dir: Path, *,
@@ -37,6 +46,20 @@ class ScreenObserver(Observer):
                 ratio = max_width / img.width
                 new_h = int(img.height * ratio)
                 img = img.resize((max_width, new_h), Image.LANCZOS)
+
+            current_hash = dhash(img, self._dedup_hash_size) if self._dedup_enabled else None
+            if (
+                self._dedup_enabled
+                and self._prev_hash is not None
+                and current_hash is not None
+            ):
+                distance = hamming_distance(current_hash, self._prev_hash)
+                if distance <= self._dedup_threshold:
+                    logger.debug(
+                        "[ScreenObserver] discarded near-duplicate (hamming={} <= {})",
+                        distance, self._dedup_threshold,
+                    )
+                    return None
 
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=quality)
@@ -85,6 +108,8 @@ class ScreenObserver(Observer):
             obs_id = await db.save_observation(
                 user_id, "screen", db_image_path, timestamp_str,
             )
+            if self._dedup_enabled:
+                self._prev_hash = current_hash
             logger.info("[ScreenObserver] captured {} ({} windows, id={})",
                         stem, len(window_titles), obs_id)
             return obs_id

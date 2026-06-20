@@ -88,6 +88,12 @@ class Config:
     observe_quality: int = 85
     observe_max_width: int = 1920
     observe_detect_windows: bool = True
+    screen_dedup_enabled: bool = True
+    screen_dedup_threshold: int = 10
+    screen_dedup_hash_size: int = 16
+    pause_when_locked: bool = True
+    pause_when_idle: bool = False
+    idle_threshold: int = 300
     notify_on_tips: bool = True
     process_interval: int = 300
     tip_interval: int = 0
@@ -141,6 +147,12 @@ class Config:
             observe_quality=int(os.environ.get("HYPOGUM_OBSERVE_QUALITY", "85")),
             observe_max_width=int(os.environ.get("HYPOGUM_OBSERVE_MAX_WIDTH", "1920")),
             observe_detect_windows=os.environ.get("HYPOGUM_OBSERVE_DETECT_WINDOWS", "true").lower() == "true",
+            screen_dedup_enabled=os.environ.get("HYPOGUM_SCREEN_DEDUP_ENABLED", "true").lower() == "true",
+            screen_dedup_threshold=int(os.environ.get("HYPOGUM_SCREEN_DEDUP_THRESHOLD", "10")),
+            screen_dedup_hash_size=int(os.environ.get("HYPOGUM_SCREEN_DEDUP_HASH_SIZE", "16")),
+            pause_when_locked=os.environ.get("HYPOGUM_PAUSE_WHEN_LOCKED", "true").lower() == "true",
+            pause_when_idle=os.environ.get("HYPOGUM_PAUSE_WHEN_IDLE", "false").lower() == "true",
+            idle_threshold=int(os.environ.get("HYPOGUM_IDLE_THRESHOLD", "300")),
             notify_on_tips=os.environ.get("HYPOGUM_NOTIFY_ON_TIPS", "true").lower() == "true",
             process_interval=int(os.environ.get("HYPOGUM_PROCESS_INTERVAL", "300")),
             tip_interval=int(os.environ.get("HYPOGUM_TIP_INTERVAL", "0")),

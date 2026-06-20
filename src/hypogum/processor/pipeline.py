@@ -97,6 +97,7 @@ async def run_processing_loop(
     config: Config,
     stop_event: asyncio.Event,
     notifier: Notifier | None = None,
+    pause_gate=None,
 ) -> None:
     """Run processing cycles on interval until stop_event is set."""
     while not stop_event.is_set():
@@ -104,6 +105,8 @@ async def run_processing_loop(
             await asyncio.wait_for(stop_event.wait(), timeout=config.process_interval)
             break
         except asyncio.TimeoutError:
+            if pause_gate and await pause_gate.is_paused():
+                continue
             try:
                 result, tip_data = await run_processing_cycle(
                     user_id, db, vec, llm,
@@ -122,7 +125,7 @@ async def run_processing_loop(
                 if result:
                     logger.info("Saved event: {}", result["summary"][:100])
                 else:
-                    logger.debug("No pending observations to process")
+                    logger.info("No new observations — skipping process cycle")
 
                 if tip_data and tip_data.get("tips") and config.notify_on_tips and notifier:
                     tips = tip_data["tips"]

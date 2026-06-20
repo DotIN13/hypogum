@@ -33,14 +33,22 @@ class Observer(ABC):
         self, db, user_id: str, data_dir: Path, *,
         max_width: int = 1920, quality: int = 85,
         stop_event: asyncio.Event,
+        pause_gate=None,
     ):
-        """Capture immediately, then every `self.interval` seconds until stop_event is set."""
-        await self.observe(db, user_id, data_dir,
-                           max_width=max_width, quality=quality)
+        """Capture immediately, then every `self.interval` seconds until stop_event is set.
+
+        When `pause_gate` reports paused (system locked/idle), the capture is skipped
+        for that tick while the timer keeps running.
+        """
+        if not (pause_gate and await pause_gate.is_paused()):
+            await self.observe(db, user_id, data_dir,
+                               max_width=max_width, quality=quality)
         while not stop_event.is_set():
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=self.interval)
                 break
             except asyncio.TimeoutError:
+                if pause_gate and await pause_gate.is_paused():
+                    continue
                 await self.observe(db, user_id, data_dir,
                                    max_width=max_width, quality=quality)

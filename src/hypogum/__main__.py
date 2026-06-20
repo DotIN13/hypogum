@@ -113,6 +113,9 @@ def _make_observers(config: Config):
         observers.append(ScreenObserver(
             window_detector=window_detector,
             interval=config.observe_screen_interval,
+            dedup_enabled=config.screen_dedup_enabled,
+            dedup_threshold=config.screen_dedup_threshold,
+            dedup_hash_size=config.screen_dedup_hash_size,
         ))
     if config.observe_camera_enabled:
         observers.append(CameraObserver(
@@ -126,6 +129,18 @@ def _make_notifier(config: Config):
         return None
     from hypogum.utils.notifier import create_notifier
     return create_notifier()
+
+
+def _make_pause_gate(config: Config):
+    if not (config.pause_when_locked or config.pause_when_idle):
+        return None
+    from hypogum.utils.activity_detector import create_activity_detector, PauseGate
+    return PauseGate(
+        create_activity_detector(),
+        pause_when_locked=config.pause_when_locked,
+        pause_when_idle=config.pause_when_idle,
+        idle_threshold=config.idle_threshold,
+    )
 
 
 # ── CLI commands ─────────────────────────────
@@ -156,12 +171,14 @@ def cmd_agent(args):
     llm = _make_llm(config)
     observers = _make_observers(config)
     notifier = _make_notifier(config)
+    pause_gate = _make_pause_gate(config)
 
     from hypogum.agent import run_agent
 
     async def _run():
         await _init_locals_async(db, vec)
-        await run_agent(config, db, vec, llm, observers, notifier=notifier)
+        await run_agent(config, db, vec, llm, observers, notifier=notifier,
+                        pause_gate=pause_gate)
 
     try:
         asyncio.run(_run())

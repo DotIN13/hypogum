@@ -8,6 +8,7 @@ from hypogum.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
 from hypogum.observers.base import Observer
 from hypogum.utils.notifier import Notifier
+from hypogum.utils.activity_detector import PauseGate
 from hypogum.processor.pipeline import run_processing_loop
 
 
@@ -18,6 +19,7 @@ async def run_agent(
     llm: LLMProvider,
     observers: list[Observer],
     notifier: Notifier | None = None,
+    pause_gate: PauseGate | None = None,
 ) -> None:
     """Main background agent loop: spawns observer tasks + processing loop."""
 
@@ -31,12 +33,14 @@ async def run_agent(
             obs.run_loop(db, user_id, data_dir,
                          max_width=config.observe_max_width,
                          quality=config.observe_quality,
-                         stop_event=stop_event)
+                         stop_event=stop_event,
+                         pause_gate=pause_gate)
         ))
         logger.info("Started {} observer (every {}s)", obs.source_type, obs.interval)
 
     tasks.append(asyncio.create_task(
-        run_processing_loop(db, vec, llm, user_id, config, stop_event, notifier)
+        run_processing_loop(db, vec, llm, user_id, config, stop_event, notifier,
+                            pause_gate=pause_gate)
     ))
 
     logger.info("hypogum agent started (user={}, process_interval={}s)",
