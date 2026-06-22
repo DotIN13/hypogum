@@ -264,10 +264,10 @@ async def generate_proactive_tip(
             system_prompt="", parts=parts, response_schema=schema,
         )
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse proactive tip JSON: {}", e)
+        logger.warning("Proactive tip response failed schema/JSON validation: {}", e)
         return None
     except Exception as e:
-        logger.error("Error generating proactive tip: {}", e)
+        logger.exception("Error generating proactive tip: {}", e)
         return None
 
     tip_count = len(tip_data.get("tips", []))

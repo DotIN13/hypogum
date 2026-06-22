@@ -70,6 +70,11 @@ class RemoteDBStore(_HTTPClientMixin, DBStore):
         result = await self._get(f"/observations/{obs_id}")
         return result.get("item")
 
+    async def get_latest_observation(self, user_id: str,
+                                     obs_type: str | None = None) -> dict | None:
+        result = await self._get("/observations/latest", type=obs_type)
+        return result.get("item")
+
     # ── events ────────────────────────────────
 
     async def save_event(self, user_id: str, timestamp: str, summary: str,

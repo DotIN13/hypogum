@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+from loguru import logger
+
 
 @dataclass(slots=True)
 class ObserverCapture:
@@ -41,8 +43,8 @@ class Observer(ABC):
         for that tick while the timer keeps running.
         """
         if not (pause_gate and await pause_gate.is_paused()):
-            await self.observe(db, user_id, data_dir,
-                               max_width=max_width, quality=quality)
+            await self._safe_observe(db, user_id, data_dir,
+                                     max_width=max_width, quality=quality)
         while not stop_event.is_set():
             try:
                 async with asyncio.timeout(self.interval):
@@ -51,5 +53,16 @@ class Observer(ABC):
             except TimeoutError:
                 if pause_gate and await pause_gate.is_paused():
                     continue
-                await self.observe(db, user_id, data_dir,
-                                   max_width=max_width, quality=quality)
+                await self._safe_observe(db, user_id, data_dir,
+                                         max_width=max_width, quality=quality)
+
+    async def _safe_observe(self, db, user_id: str, data_dir: Path, *,
+                            max_width: int, quality: int) -> int | None:
+        """Run a single observe() guarded so a failure logs a full traceback
+        without killing the observer loop."""
+        try:
+            return await self.observe(db, user_id, data_dir,
+                                      max_width=max_width, quality=quality)
+        except Exception as e:
+            logger.exception("[{}] observe iteration failed: {}", self.source_type, e)
+            return None

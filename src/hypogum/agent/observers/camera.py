@@ -83,5 +83,5 @@ class CameraObserver(Observer):
             logger.error("[CameraObserver] opencv-python and pillow are required: pip install opencv-python pillow")
             return None
         except Exception as e:
-            logger.error("[CameraObserver] capture failed: {}", e)
+            logger.exception("[CameraObserver] capture failed: {}", e)
             return None

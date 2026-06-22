@@ -177,6 +177,21 @@ class SQLAlchemyDBStore(DBStore):
             row = result.mappings().first()
             return dict(row) if row else None
 
+    async def get_latest_observation(self, user_id: str,
+                                     obs_type: str | None = None) -> dict | None:
+        assert self._engine is not None
+        async with self._engine.connect() as conn:
+            stmt = select(
+                observations.c.id, observations.c.type, observations.c.image_path,
+                observations.c.timestamp, observations.c.processed,
+            ).where(observations.c.user_id == user_id)
+            if obs_type:
+                stmt = stmt.where(observations.c.type == obs_type)
+            stmt = stmt.order_by(observations.c.id.desc()).limit(1)
+            result = await conn.execute(stmt)
+            row = result.mappings().first()
+            return dict(row) if row else None
+
     # ── events ────────────────────────────────
 
     async def save_event(self, user_id: str, timestamp: str, summary: str,

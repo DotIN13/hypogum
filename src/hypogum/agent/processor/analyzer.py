@@ -35,13 +35,14 @@ def _merge_evidence(existing_json: str | None, new_json: str, max_entries: int =
             else:
                 existing = [{"text": str(parsed), "timestamp": ""}]
         except (json.JSONDecodeError, TypeError):
-            pass
+            logger.debug("Discarding unparseable existing evidence JSON")
 
     try:
         new_entries = json.loads(new_json)
         if not isinstance(new_entries, list):
             new_entries = [{"text": str(new_entries), "timestamp": ""}]
     except (json.JSONDecodeError, TypeError):
+        logger.debug("New evidence JSON unparseable; wrapping as plain text")
         new_entries = [{"text": str(new_json), "timestamp": ""}]
 
     merged = existing + new_entries
@@ -336,10 +337,10 @@ async def process_pending_observations(
             system_prompt="", parts=parts, response_schema=schema,
         )
     except json.JSONDecodeError as e:
-        logger.error("Failed to parse LLM JSON response: {}", e)
+        logger.warning("LLM analysis response failed schema/JSON validation: {}", e)
         return None
     except Exception as e:
-        logger.error("Error during analysis: {}", e)
+        logger.exception("Error during analysis: {}", e)
         return None
 
     summary = analysis.get("summary", "")

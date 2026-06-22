@@ -137,4 +137,4 @@ async def run_processing_loop(
                         body += f" (+{len(tips) - 1} more)"
                     await notifier.notify(title, body)
             except Exception as e:
-                logger.error("Process cycle failed: {}", e)
+                logger.exception("Process cycle failed: {}", e)

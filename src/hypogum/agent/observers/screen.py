@@ -30,6 +30,26 @@ class ScreenObserver(Observer):
         self._dedup_hash_size = dedup_hash_size
         self._prev_hash: int | None = None
 
+    async def _load_prev_hash_from_db(self, db, user_id: str, data_dir: Path) -> int | None:
+        """Seed the dedup baseline from the last stored screen image (e.g. after a restart)."""
+        try:
+            latest = await db.get_latest_observation(user_id, self.source_type)
+            if not latest or not latest.get("image_path"):
+                return None
+            path = data_dir / latest["image_path"]
+            if not path.exists():
+                return None
+            with Image.open(path) as img:
+                prev = dhash(img.convert("RGB"), self._dedup_hash_size)
+            logger.info(
+                "[ScreenObserver] seeded dedup hash from last stored observation (id={})",
+                latest.get("id"),
+            )
+            return prev
+        except Exception as e:
+            logger.debug("[ScreenObserver] could not seed prev hash from db: {}", e)
+            return None
+
     async def observe(
         self, db, user_id: str, data_dir: Path, *,
         max_width: int = 1920, quality: int = 85,
@@ -48,6 +68,8 @@ class ScreenObserver(Observer):
                 img = img.resize((max_width, new_h), Image.LANCZOS)
 
             current_hash = dhash(img, self._dedup_hash_size) if self._dedup_enabled else None
+            if self._dedup_enabled and self._prev_hash is None:
+                self._prev_hash = await self._load_prev_hash_from_db(db, user_id, data_dir)
             if (
                 self._dedup_enabled
                 and self._prev_hash is not None
@@ -118,5 +140,5 @@ class ScreenObserver(Observer):
             logger.error("[ScreenObserver] mss and pillow are required: pip install mss pillow")
             return None
         except Exception as e:
-            logger.error("[ScreenObserver] capture failed: {}", e)
+            logger.exception("[ScreenObserver] capture failed: {}", e)
             return None

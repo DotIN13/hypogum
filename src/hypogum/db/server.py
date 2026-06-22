@@ -74,6 +74,12 @@ def create_db_app(
         items = await db.get_pending_observations(ctx.user_id, limit)
         return {"items": items}
 
+    @app.get("/api/v1/observations/latest")
+    async def get_latest_observation(type: str | None = Query(None),
+                                     ctx: AuthContext = Depends(_get_auth)):
+        item = await db.get_latest_observation(ctx.user_id, type)
+        return {"item": item}
+
     @app.post("/api/v1/observations/processed")
     async def mark_observations_processed(req: MarkProcessedReq, ctx: AuthContext = Depends(_get_auth)):
         await db.mark_observations_processed(ctx.user_id, req.ids)

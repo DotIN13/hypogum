@@ -27,6 +27,12 @@ class DBStore(ABC):
         """Return a single observation by id."""
         ...
 
+    @abstractmethod
+    async def get_latest_observation(self, user_id: str,
+                                     obs_type: str | None = None) -> dict | None:
+        """Return the most recent observation (highest id), optionally filtered by type."""
+        ...
+
     # ── events ────────────────────────────────
 
     @abstractmethod
