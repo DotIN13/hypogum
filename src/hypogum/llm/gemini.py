@@ -1,8 +1,6 @@
 import asyncio
 import json
 
-from loguru import logger
-
 from hypogum.llm.base import LLMProvider
 
 
@@ -10,10 +8,8 @@ class GeminiProvider(LLMProvider):
     """Gemini LLM via google-genai SDK."""
 
     def __init__(self, *, api_key: str,
-                 model: str = "gemini-3.1-flash-lite",
-                 embedding_model: str = "gemini-embedding-2"):
+                 model: str = "gemini-3.1-flash-lite"):
         self.model = model
-        self.embedding_model = embedding_model
         self._api_key = api_key
 
     def _client(self):
@@ -40,9 +36,10 @@ class GeminiProvider(LLMProvider):
                     data=part["data"], mime_type=part.get("mime_type", "image/jpeg"),
                 ))
 
+        text_mode = response_schema is None
         config = types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
-            response_mime_type="application/json",
+            response_mime_type="application/json" if not text_mode else "text/plain",
             max_output_tokens=max_tokens,
         )
         if response_schema:
@@ -60,19 +57,6 @@ class GeminiProvider(LLMProvider):
         raw = response.text
         if not raw:
             raise ValueError("Empty response from Gemini")
+        if text_mode:
+            return {"text": raw}
         return json.loads(raw)
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        client = self._client()
-        tasks = [
-            asyncio.wait_for(
-                client.aio.models.embed_content(
-                    model=self.embedding_model or "gemini-embedding-2",
-                    contents=text,
-                ),
-                timeout=30,
-            )
-            for text in texts
-        ]
-        results = await asyncio.gather(*tasks)
-        return [r.embeddings[0].values for r in results if r and r.embeddings]

@@ -49,27 +49,46 @@ def _resolve_prompts_dir() -> Path:
     return prompts_dir
 
 
+def _resolve_memory_dir() -> Path:
+    env_memory_dir = os.environ.get("HYPOGUM_MEMORY_DIR", "").strip()
+    if env_memory_dir:
+        memory_dir = Path(env_memory_dir).resolve()
+        source = "HYPOGUM_MEMORY_DIR"
+    else:
+        data_dir = _resolve_data_dir()
+        memory_dir = (data_dir / "memory").resolve()
+        source = "default"
+    logger.info("Using memory dir {} (source: {})", memory_dir, source)
+    return memory_dir
+
+
 @dataclass(slots=True)
 class Config:
     # ── agent / mcp: HTTP db provider target (the `hypogum db` service) ──
     db_url: str = "http://localhost:8055"
 
     # ── `hypogum db` service backend ──
-    db_dsn: str | None = None                 # relational DSN; None -> local sqlite under data_dir
-    chroma_dir: Path | None = None            # local ChromaDB dir; None -> data_dir/chroma.db
+    db_dsn: str | None = None
     db_host: str = "0.0.0.0"
     db_port: int = 8055
 
     data_dir: Path = field(default_factory=_resolve_data_dir)
     prompts_dir: Path = field(default_factory=_resolve_prompts_dir)
+    memory_dir: Path = field(default_factory=_resolve_memory_dir)
 
     llm_provider: Literal["gemini", "openai", "anthropic"] = "gemini"
     llm_model: str = "gemini-3.1-flash-lite"
-    embedding_model: str = "gemini-embedding-2"
-    embedding_provider: str | None = None
     google_api_key: str | None = None
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+
+    # ── agent configuration ──
+    agent_command: str = "opencode"
+    agent_args: str = "run"
+    agent_flags: str = "--format json"
+    agent_timeout: int = 1800
+    agent_serve_port: int = 4099
+    agent_serve_host: str = "127.0.0.1"
 
     auth_provider: Literal["noauth", "jwt", "oauth2"] = "noauth"
     auth_jwt_secret: str | None = None
@@ -98,17 +117,15 @@ class Config:
     pause_when_idle: bool = False
     idle_threshold: int = 300
     notify_on_tips: bool = True
-    process_interval: int = 300
-    tip_interval: int = 0
-    confidence_threshold: int = 5
-    merge_threshold: float = 0.85
+    process_interval: int = 600
+    tip_interval: int = 600
     max_artifacts: int = 20
-    max_evidence_entries: int = 10
     max_tip_goals: int = 5
     max_tip_events: int = 5
     max_tip_traits: int = 20
     tip_summary_chars: int = 1000
     trait_similarity_threshold: float = 0.5
+    memory_lint_interval: int = 86400
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -118,25 +135,27 @@ class Config:
         if db_dsn is None:
             db_dsn = f"sqlite+aiosqlite:///{(data_dir / 'app.db').as_posix()}"
 
-        chroma_env = os.environ.get("HYPOGUM_CHROMA_DIR", "").strip()
-        chroma_dir = Path(chroma_env).resolve() if chroma_env else (data_dir / "chroma.db")
-
         return cls(
             db_url=os.environ.get("HYPOGUM_DB_URL") or "http://localhost:8055",
             db_dsn=db_dsn,
-            chroma_dir=chroma_dir,
             db_host=os.environ.get("HYPOGUM_DB_HOST", "0.0.0.0"),
             db_port=int(os.environ.get("HYPOGUM_DB_PORT", "8055")),
             data_dir=data_dir,
             prompts_dir=_resolve_prompts_dir(),
+            memory_dir=_resolve_memory_dir(),
 
             llm_provider=os.environ.get("HYPOGUM_LLM_PROVIDER", "gemini"),  # type: ignore[arg-type]
             llm_model=os.environ.get("HYPOGUM_LLM_MODEL", "gemini-3.1-flash-lite"),
-            embedding_model=os.environ.get("HYPOGUM_EMBEDDING_MODEL", "gemini-embedding-2"),
-            embedding_provider=os.environ.get("HYPOGUM_EMBEDDING_PROVIDER") or None,
             google_api_key=os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or None,
             openai_api_key=os.environ.get("OPENAI_API_KEY") or None,
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
+
+            agent_command=os.environ.get("HYPOGUM_AGENT_COMMAND", "opencode"),
+            agent_args=os.environ.get("HYPOGUM_AGENT_ARGS", "run"),
+            agent_flags=os.environ.get("HYPOGUM_AGENT_FLAGS", "--format json"),
+            agent_timeout=int(os.environ.get("HYPOGUM_AGENT_TIMEOUT", "1800")),
+            agent_serve_port=int(os.environ.get("HYPOGUM_AGENT_SERVE_PORT", "4099")),
+            agent_serve_host=os.environ.get("HYPOGUM_AGENT_SERVE_HOST", "127.0.0.1"),
 
             auth_provider=os.environ.get("HYPOGUM_AUTH_PROVIDER", "noauth"),  # type: ignore[arg-type]
             auth_jwt_secret=os.environ.get("HYPOGUM_AUTH_JWT_SECRET") or None,
@@ -165,15 +184,13 @@ class Config:
             pause_when_idle=os.environ.get("HYPOGUM_PAUSE_WHEN_IDLE", "false").lower() == "true",
             idle_threshold=int(os.environ.get("HYPOGUM_IDLE_THRESHOLD", "300")),
             notify_on_tips=os.environ.get("HYPOGUM_NOTIFY_ON_TIPS", "true").lower() == "true",
-            process_interval=int(os.environ.get("HYPOGUM_PROCESS_INTERVAL", "300")),
-            tip_interval=int(os.environ.get("HYPOGUM_TIP_INTERVAL", "0")),
-            confidence_threshold=int(os.environ.get("HYPOGUM_CONFIDENCE_THRESHOLD", "5")),
-            merge_threshold=float(os.environ.get("HYPOGUM_MERGE_THRESHOLD", "0.85")),
+            process_interval=int(os.environ.get("HYPOGUM_PROCESS_INTERVAL", "600")),
+            tip_interval=int(os.environ.get("HYPOGUM_TIP_INTERVAL", "600")),
             max_artifacts=int(os.environ.get("HYPOGUM_MAX_ARTIFACTS", "20")),
-            max_evidence_entries=int(os.environ.get("HYPOGUM_MAX_EVIDENCE_ENTRIES", "10")),
             max_tip_goals=int(os.environ.get("HYPOGUM_MAX_TIP_GOALS", "5")),
             max_tip_events=int(os.environ.get("HYPOGUM_MAX_TIP_EVENTS", "5")),
             max_tip_traits=int(os.environ.get("HYPOGUM_MAX_TIP_TRAITS", "20")),
             tip_summary_chars=int(os.environ.get("HYPOGUM_TIP_SUMMARY_CHARS", "1000")),
             trait_similarity_threshold=float(os.environ.get("HYPOGUM_TRAIT_SIMILARITY_THRESHOLD", "0.5")),
+            memory_lint_interval=int(os.environ.get("HYPOGUM_MEMORY_LINT_INTERVAL", "86400")),
         )

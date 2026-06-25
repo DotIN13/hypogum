@@ -1,18 +1,14 @@
 import json
 
-from loguru import logger
-
 from hypogum.llm.base import LLMProvider
 
 
 class OpenAIProvider(LLMProvider):
-    """OpenAI LLM via openai SDK. Supports structured outputs with response_format."""
+    """OpenAI LLM via openai SDK."""
 
     def __init__(self, *, api_key: str,
-                 model: str = "gpt-5.4-mini",
-                 embedding_model: str = "text-embedding-3-small"):
+                 model: str = "gpt-5.4-mini"):
         self.model = model
-        self.embedding_model = embedding_model
         self._api_key = api_key
 
     def _client(self):
@@ -44,6 +40,7 @@ class OpenAIProvider(LLMProvider):
                 })
         messages.append({"role": "user", "content": user_content})
 
+        text_mode = response_schema is None
         kwargs: dict = {"model": self.model, "messages": messages, "max_tokens": max_tokens}
         if response_schema:
             kwargs["response_format"] = {
@@ -54,19 +51,11 @@ class OpenAIProvider(LLMProvider):
                     "schema": response_schema,
                 },
             }
-        else:
-            kwargs["response_format"] = {"type": "json_object"}
 
         response = await client.chat.completions.create(**kwargs)
         raw = response.choices[0].message.content
         if not raw:
             raise ValueError("Empty response from OpenAI")
+        if text_mode:
+            return {"text": raw}
         return json.loads(raw)
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        client = self._client()
-        response = await client.embeddings.create(
-            model=self.embedding_model or "text-embedding-3-small",
-            input=texts,
-        )
-        return [d.embedding for d in response.data]

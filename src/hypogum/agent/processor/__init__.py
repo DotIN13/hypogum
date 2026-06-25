@@ -1,12 +1,10 @@
-from hypogum.agent.processor.analyzer import process_pending_observations, _wrap_evidence, _merge_evidence
-from hypogum.agent.processor.tips import generate_proactive_tip
+from hypogum.agent.processor.describe import describe_pending_screen_observations
 from hypogum.agent.processor.pipeline import run_processing_cycle, run_processing_loop
+from hypogum.agent.processor.tips import generate_proactive_tip
 
 __all__ = [
-    "process_pending_observations",
+    "describe_pending_screen_observations",
     "generate_proactive_tip",
     "run_processing_cycle",
     "run_processing_loop",
-    "_wrap_evidence",
-    "_merge_evidence",
 ]

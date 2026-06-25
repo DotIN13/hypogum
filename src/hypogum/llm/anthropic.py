@@ -1,21 +1,16 @@
-import json
 import base64
-
-from loguru import logger
+import json
 
 from hypogum.llm.base import LLMProvider
 
 
 class AnthropicProvider(LLMProvider):
-    """Anthropic Claude LLM via anthropic SDK. No native embedding — requires fallback."""
+    """Anthropic Claude LLM via anthropic SDK."""
 
     def __init__(self, *, api_key: str,
-                 model: str = "claude-haiku-4-5",
-                 embedding_provider: LLMProvider | None = None):
+                 model: str = "claude-haiku-4-5"):
         self.model = model
-        self.embedding_model = None
         self._api_key = api_key
-        self._embedding_provider = embedding_provider
 
     def _client(self):
         from anthropic import AsyncAnthropic
@@ -47,8 +42,9 @@ class AnthropicProvider(LLMProvider):
                     },
                 })
 
+        text_mode = response_schema is None
         system_text = system_prompt
-        if response_schema:
+        if not text_mode:
             schema_str = json.dumps(response_schema, indent=2)
             system_text += f"\n\nYou MUST respond with a JSON object matching this schema exactly:\n```json\n{schema_str}\n```\nReturn ONLY valid JSON, no markdown fences."
 
@@ -64,17 +60,12 @@ class AnthropicProvider(LLMProvider):
             raise ValueError("Empty response from Anthropic")
 
         raw = raw.strip()
+        if text_mode:
+            return {"text": raw}
+
         if raw.startswith("```"):
             lines = raw.split("\n")
             lines = [l for l in lines if not l.strip().startswith("```")]
             raw = "\n".join(lines).strip()
 
         return json.loads(raw)
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        if self._embedding_provider is None:
-            raise RuntimeError(
-                "Anthropic has no embedding API. Set HYPOGUM_EMBEDDING_PROVIDER "
-                "or provide an embedding_provider fallback."
-            )
-        return await self._embedding_provider.embed(texts)

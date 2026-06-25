@@ -3,139 +3,18 @@ from pathlib import Path
 
 from loguru import logger
 
+from hypogum.agent.prompts import render_prompt
 from hypogum.db.relational.base import DBStore
-from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
-
-_TRAIT_TYPES = {"personality", "skill", "interest", "preference", "ownership", "relationship", "weakness"}
-
-
-def _load_proactive_prompt(prompts_dir: Path) -> str:
-    return (prompts_dir / "proactive_prompt.md").read_text(encoding="utf-8")
+from hypogum.memory.search import search_memory
+from hypogum.memory.store import MemoryStore
 
 
 def _load_proactive_schema(prompts_dir: Path) -> dict:
     return json.loads((prompts_dir / "proactive_schema.json").read_text(encoding="utf-8"))
 
 
-async def _find_similar_goals(
-    llm: LLMProvider, vec: VectorStore, query: str, user_id: str, limit: int = 5,
-) -> list[dict]:
-    """Embed the query and search for semantically similar user goals in the vector store."""
-    embeddings = await llm.embed([query])
-    goals = await vec.search(
-        user_id, embeddings[0], limit=limit, item_type="goal",
-    )
-
-    lines = [f"[proactive-tip] goals query: \"{query[:120]}\""]
-    if goals:
-        for g in goals:
-            sim = g.get("similarity", 0)
-            lines.append(f"  {sim:.2f}  [goal] \"{g.get('content', '')[:80]}\"")
-        lines.append(f"  → matched {len(goals)} goals")
-    else:
-        lines.append("  → no matching goals found")
-    logger.info("\n".join(lines))
-    return goals
-
-
-async def _find_similar_traits(
-    llm: LLMProvider, vec: VectorStore, query: str, user_id: str,
-    limit: int = 20, threshold: float = 0.5,
-) -> list[dict]:
-    """Embed the query and search for semantically similar personality/skill/interest/etc traits."""
-    embeddings = await llm.embed([query])
-    traits = await vec.search(
-        user_id, embeddings[0], limit=limit, exclude_type="event",
-    )
-
-    lines = [f"[proactive-tip] traits query (threshold={threshold}): \"{query[:120]}\""]
-    if traits:
-        for t in traits:
-            sim = t.get("similarity", 0)
-            lines.append(f"  {sim:.2f}  [{t.get('type', '?')}] \"{t.get('content', '')[:80]}\"")
-        lines.append(f"  → matched {len(traits)} traits")
-    else:
-        lines.append("  → no matching traits found")
-    logger.info("\n".join(lines))
-
-    traits = [r for r in traits
-              if r.get("type") in _TRAIT_TYPES
-              and r.get("similarity", 0) >= threshold]
-    return traits
-
-
-# ── pipeline phases ───────────────────────────
-
-
-async def _gather_events(
-    vec: VectorStore, user_id: str, current_events: list[dict] | None, limit: int = 5,
-) -> list[dict] | None:
-    """Use provided events or fetch the most recent ones from vector store.
-    Returns None if no events are available."""
-    if current_events:
-        return current_events
-    events, _ = await vec.get_all(user_id, item_type="event", limit=limit)
-    return events if events else None
-
-
-async def _build_prompt_sections(
-    llm: LLMProvider,
-    vec: VectorStore,
-    user_id: str,
-    events: list[dict],
-    current_timestamp: str | None,
-    current_summary: str | None,
-    latest_observation: dict | None,
-    max_goals: int = 5,
-    max_traits: int = 20,
-    max_summary_chars: int = 1000,
-    trait_similarity_threshold: float = 0.5,
-):
-    """Search for matching goals and traits, then format all prompt sections.
-    Returns a dict with keys: goals, events, summary, traits, observation."""
-    event_texts = [e.get('event', e.get('content', str(e))) for e in events]
-    search_query = " ".join(event_texts)
-
-    goals = await _find_similar_goals(llm, vec, search_query, user_id, limit=max_goals)
-
-    goals_section = "\n".join(
-        f"- {g.get('content', '')} (confidence: {g.get('confidence', '?')}, similarity: {g.get('similarity', 0):.2f})"
-        for g in goals
-    ) if goals else (
-        "(No stored goals found — infer the user's most likely goals from their "
-        "current events, screen observation, activity summary, and known traits, "
-        "and generate tips for those inferred goals.)"
-    )
-
-    now_ts = current_timestamp or "just now"
-    events_section = "\n".join(
-        f"- [{now_ts}] {e.get('event', e.get('content', str(e)))}"
-        for e in events
-    )
-
-    summary_section = current_summary[:max_summary_chars] if current_summary else "(no summary available)"
-    traits_query = current_summary[:max_summary_chars] if current_summary else " ".join(event_texts)
-    traits = await _find_similar_traits(llm, vec, traits_query, user_id, limit=max_traits, threshold=trait_similarity_threshold)
-    traits_section = "\n".join(
-        f"- [{t.get('type', '?')}] {t.get('content', '')} (similarity: {t.get('similarity', 0):.2f})"
-        for t in traits
-    ) if traits else "(no matching traits found)"
-
-    observation_section = _format_observation_section(latest_observation)
-
-    return {
-        "goals": goals_section,
-        "goals_raw": goals,
-        "events": events_section,
-        "summary": summary_section,
-        "traits": traits_section,
-        "observation": observation_section,
-    }
-
-
 def _format_observation_section(latest_observation: dict | None) -> str:
-    """Build the observation section string from window titles and prompt text."""
     if not latest_observation:
         return "(no observation details)"
 
@@ -150,6 +29,50 @@ def _format_observation_section(latest_observation: dict | None) -> str:
     return "\n".join(obs_parts) if obs_parts else "(no observation details)"
 
 
+def _read_relevant_pages(memory_store: MemoryStore, query: str, max_pages: int = 20) -> list[dict]:
+    """Search memory pages for relevant context, read the matching pages."""
+    hits = search_memory(query, memory_store.root, max_results=max_pages)
+    seen: set[str] = set()
+    pages: list[dict] = []
+    for hit in hits:
+        file_path = hit.get("file", "")
+        if file_path in seen:
+            continue
+        seen.add(file_path)
+        try:
+            content = memory_store.read_page(file_path)
+            pages.append({"path": file_path, "content": content[:2000]})
+        except (FileNotFoundError, OSError):
+            continue
+    return pages
+
+
+def _format_trait_section(memory_store: MemoryStore, query: str, max_pages: int = 20) -> str:
+    """Search for and format relevant trait pages as a prompt section."""
+    pages = _read_relevant_pages(memory_store, f"type: trait {query}", max_pages)
+    if not pages:
+        return "(no matching traits found in memory)"
+
+    lines: list[str] = []
+    for p in pages:
+        content_preview = p["content"].replace("\n", " ")[:200]
+        lines.append(f"- [{p['path']}] {content_preview}")
+    return "\n".join(lines) if lines else "(no matching traits found in memory)"
+
+
+def _format_goal_section(memory_store: MemoryStore, query: str, max_pages: int = 5) -> str:
+    """Search for and format relevant goal pages as a prompt section."""
+    pages = _read_relevant_pages(memory_store, f"type: goal {query}", max_pages)
+    if not pages:
+        return "(no stored goals found in memory)"
+
+    lines: list[str] = []
+    for p in pages:
+        content_preview = p["content"].replace("\n", " ")[:200]
+        lines.append(f"- [{p['path']}] {content_preview}")
+    return "\n".join(lines) if lines else "(no stored goals found in memory)"
+
+
 def _format_tip_prompt(
     prompts_dir: Path,
     goals_section: str,
@@ -158,26 +81,14 @@ def _format_tip_prompt(
     traits_section: str,
     observation_section: str,
 ) -> str:
-    """Load the proactive prompt template and inject all formatted sections."""
-    try:
-        return _load_proactive_prompt(prompts_dir).format(
-            goals_section=goals_section,
-            events_section=events_section,
-            summary_section=summary_section,
-            traits_section=traits_section,
-            observation_section=observation_section,
-        )
-    except KeyError:
-        template = _load_proactive_prompt(prompts_dir)
-        for placeholder, value in [
-            ("{goals_section}", goals_section),
-            ("{events_section}", events_section),
-            ("{summary_section}", summary_section),
-            ("{traits_section}", traits_section),
-            ("{observation_section}", observation_section),
-        ]:
-            template = template.replace(placeholder, value)
-        return template
+    return render_prompt(
+        prompts_dir, "proactive_prompt.md",
+        goals_section=goals_section,
+        events_section=events_section,
+        summary_section=summary_section,
+        traits_section=traits_section,
+        observation_section=observation_section,
+    )
 
 
 def _build_tip_multimodal_parts(
@@ -186,8 +97,6 @@ def _build_tip_multimodal_parts(
     prompt: str,
     latest_screen_image_path: str | None,
 ):
-    """Build the multimodal parts list: attach latest screenshot if available, then the prompt.
-    Returns (parts, schema)."""
     schema = _load_proactive_schema(prompts_dir)
 
     parts: list[dict] = []
@@ -208,15 +117,12 @@ def _build_tip_multimodal_parts(
     return parts, schema
 
 
-# ── public API ────────────────────────────────
-
-
 async def generate_proactive_tip(
     user_id: str,
     db: DBStore,
-    vec: VectorStore,
     llm: LLMProvider,
     *,
+    memory_store: MemoryStore,
     prompts_dir: Path,
     data_dir: Path,
     current_events: list[dict] | None = None,
@@ -230,29 +136,29 @@ async def generate_proactive_tip(
     max_summary_chars: int = 1000,
     trait_similarity_threshold: float = 0.5,
 ) -> dict | None:
-    """Generate proactive tips by matching goals and traits against current activity."""
+    """Generate proactive tips using memory pages as context."""
 
-    events = await _gather_events(vec, user_id, current_events, limit=max_events)
-    if not events:
-        logger.info("No events found; skipping proactive tip.")
+    summary_text = current_summary[:max_summary_chars] if current_summary else ""
+
+    if not summary_text:
+        logger.info("No summary; skipping proactive tip.")
         return None
 
-    sections = await _build_prompt_sections(
-        llm, vec, user_id, events, current_timestamp, current_summary, latest_observation,
-        max_goals=max_goals, max_traits=max_traits,
-        max_summary_chars=max_summary_chars, trait_similarity_threshold=trait_similarity_threshold,
-    )
+    events_section = f"- [{current_timestamp or 'just now'}] {summary_text[:300]}"
 
-    if not sections["goals_raw"]:
-        logger.info("No relevant goals found; asking LLM to infer goals from current activity.")
+    goals_section = _format_goal_section(memory_store, summary_text, max_goals)
+
+    traits_section = _format_trait_section(memory_store, summary_text, max_traits)
+
+    observation_section = _format_observation_section(latest_observation)
 
     prompt = _format_tip_prompt(
         prompts_dir,
-        sections["goals"],
-        sections["events"],
-        sections["summary"],
-        sections["traits"],
-        sections["observation"],
+        goals_section,
+        events_section,
+        summary_text[:max_summary_chars],
+        traits_section,
+        observation_section,
     )
 
     parts, schema = _build_tip_multimodal_parts(

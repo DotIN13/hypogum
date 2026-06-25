@@ -1,16 +1,13 @@
-import json
-from fastapi import FastAPI, HTTPException, Request, Query, Depends
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from loguru import logger
+from pydantic import BaseModel
 
+from hypogum.db.auth.base import AuthContext, AuthProvider
 from hypogum.db.relational.base import DBStore
-from hypogum.db.vector.base import VectorStore
-from hypogum.db.auth.base import AuthProvider, AuthContext
 
 
 def create_db_app(
     db: DBStore,
-    vec: VectorStore,
     auth: AuthProvider,
 ) -> FastAPI:
     """Build the FastAPI `hypogum db` service with /api/v1/ endpoints."""
@@ -36,24 +33,6 @@ def create_db_app(
 
     class UpdateTipReq(BaseModel):
         tip: str
-
-    class VectorSearchReq(BaseModel):
-        embedding: list[float]
-        limit: int = 10
-        item_type: str | None = None
-        exclude_type: str | None = None
-
-    class VectorSimilarReq(BaseModel):
-        embedding: list[float]
-        item_type: str
-        threshold: float = 0.85
-        limit: int = 5
-
-    class VectorAddReq(BaseModel):
-        records: list[dict]
-
-    class VectorUpdateMetaReq(BaseModel):
-        metadata: dict
 
     # ── auth dependency ────────────────────────
 
@@ -126,45 +105,6 @@ def create_db_app(
         items, total = await db.get_tips(ctx.user_id, limit, offset)
         return {"items": items, "total": total}
 
-    # ── vectors ───────────────────────────────
-
-    @app.post("/api/v1/vectors/search")
-    async def vector_search(req: VectorSearchReq, ctx: AuthContext = Depends(_get_auth)):
-        items = await vec.search(
-            ctx.user_id, req.embedding,
-            limit=req.limit, item_type=req.item_type, exclude_type=req.exclude_type,
-        )
-        return {"items": items}
-
-    @app.post("/api/v1/vectors/similar")
-    async def vector_similar(req: VectorSimilarReq, ctx: AuthContext = Depends(_get_auth)):
-        best, best_sim, candidates = await vec.find_similar(
-            ctx.user_id, req.embedding, req.item_type, req.threshold, req.limit,
-        )
-        return {
-            "best_match": best,
-            "best_similarity": best_sim,
-            "candidates": [(c[0], c[1]) for c in candidates],
-        }
-
-    @app.post("/api/v1/vectors")
-    async def vector_add(req: VectorAddReq, ctx: AuthContext = Depends(_get_auth)):
-        await vec.add(ctx.user_id, req.records)
-        return {"status": "ok"}
-
-    @app.patch("/api/v1/vectors/{item_id}/metadata")
-    async def vector_update_metadata(item_id: str, req: VectorUpdateMetaReq,
-                                     ctx: AuthContext = Depends(_get_auth)):
-        await vec.update_metadata(ctx.user_id, item_id, req.metadata)
-        return {"status": "ok"}
-
-    @app.get("/api/v1/vectors/all")
-    async def vector_get_all(item_type: str | None = Query(None),
-                             limit: int = Query(50), offset: int = Query(0),
-                             ctx: AuthContext = Depends(_get_auth)):
-        items, total = await vec.get_all(ctx.user_id, item_type=item_type, limit=limit, offset=offset)
-        return {"items": items, "total": total}
-
     @app.get("/api/v1/health")
     async def health():
         return {"status": "healthy"}
@@ -172,7 +112,6 @@ def create_db_app(
     @app.on_event("startup")
     async def startup():
         await db.init()
-        await vec.init()
         logger.info("hypogum-db ready")
 
     @app.on_event("shutdown")
@@ -183,7 +122,7 @@ def create_db_app(
 
 
 def run_db_service(host: str = "0.0.0.0", port: int = 8055, *, db: DBStore,
-                   vec: VectorStore, auth: AuthProvider):
+                   auth: AuthProvider):
     import uvicorn
-    app = create_db_app(db, vec, auth)
+    app = create_db_app(db, auth)
     uvicorn.run(app, host=host, port=port)

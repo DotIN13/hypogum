@@ -1,140 +1,199 @@
 import asyncio
 import json
+from pathlib import Path
 
 from loguru import logger
 
+from hypogum.agent.prompts import render_prompt
+from hypogum.agent.scheduler import IntervalTask
+from hypogum.agent.utils.notifier import Notifier
 from hypogum.config import Config
 from hypogum.db.relational.base import DBStore
-from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
-from hypogum.agent.utils.notifier import Notifier
-from hypogum.agent.processor.analyzer import process_pending_observations
-from hypogum.agent.processor.tips import generate_proactive_tip
+from hypogum.memory.agent import invoke_agent, invoke_agent_continue
+from hypogum.memory.store import MemoryStore
+
+
+TIP_PROMPT = """Based on everything you know about the user — recent activity on screen, stored goals, traits, and events in memory — generate actionable proactive tips.
+
+1. Read recent memory pages (goals, traits, events, log.md) to understand current context.
+2. Identify 1-3 high-impact, immediately actionable tips.
+3. For each tip, write a markdown file to memory/tips/<goal-slug>/<timestamp>-<slug>.md
+
+Each tip file must follow this format exactly:
+
+---
+type: tip
+goal: <goal-slug>
+created: <ISO-8601 timestamp>
+summary: <one-sentence summary of the suggestion>
+---
+
+# Tip: <short title>
+
+**Suggestion:** one-sentence actionable step.
+
+**Rationale:** why this matters right now, citing specific evidence from memory.
+```
+
+File naming: `memory/tips/<goal-slug>/<YYYY-MM-DDTHHMMSS>Z-<short-slug>.md`
+
+Goal directory slugs should match existing goal page filenames (e.g., `refactor-zmtiles-pipeline`).
+If no matching goal directory exists, create it.
+Focus on tips the user can act on immediately."""
 
 
 async def run_processing_cycle(
     user_id: str,
     db: DBStore,
-    vec: VectorStore,
     llm: LLMProvider,
+    memory_store: MemoryStore,
+    observers: list,
     *,
-    prompts_dir,
-    data_dir,
-    confidence_threshold: int,
-    merge_threshold: float,
-    max_artifacts: int,
-    max_evidence_entries: int = 10,
-    max_tip_goals: int = 5,
-    max_tip_events: int = 5,
-    max_tip_traits: int = 20,
-    tip_summary_chars: int = 1000,
-    trait_similarity_threshold: float = 0.5,
-) -> tuple[dict | None, dict | None]:
-    """One full processing cycle: analyze → save event → add vectors → generate tips → save tip.
+    prompts_dir: Path,
+    data_dir: Path,
+    config: Config,
+    notifier: Notifier | None = None,
+) -> dict | None:
+    """One processing cycle: describe → save event → ingest + tips in same session."""
 
-    Returns (result, tip_data). result is the pipeline result dict with event_id,
-    tip_data is the raw tip JSON (for notification). Both can be None."""
-    result = await process_pending_observations(
-        user_id, db, vec, llm,
-        prompts_dir=prompts_dir,
-        data_dir=data_dir,
-        confidence_threshold=confidence_threshold,
-        merge_threshold=merge_threshold,
-        max_artifacts=max_artifacts,
-        max_evidence_entries=max_evidence_entries,
-    )
-    if not result:
-        return None, None
+    # Phase A: Run all observers' describe steps
+    products: list[str] = []
+    for obs in observers:
+        product_path = await obs.describe(
+            db, user_id, data_dir, llm=llm, prompts_dir=prompts_dir,
+        )
+        if product_path:
+            products.append(product_path)
+
+    if not products:
+        logger.info("No products generated — skipping process cycle")
+        return None
+
+    logger.info("Generated {} product(s): {}", len(products), products)
+
+    # Phase B: Derive summary from first screen product, save event
+    summary = ""
+    for p in products:
+        if "screen" in p:
+            prod_abs = data_dir / p
+            if prod_abs.exists():
+                text = prod_abs.read_text(encoding="utf-8")
+                summary = text[:500]
+            break
+    if not summary:
+        summary = ", ".join(products)
+
+    import time
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     event_id = await db.save_event(
         user_id,
-        result["timestamp"],
-        result["summary"],
-        result["raw_transcripts"],
-        result["analysis_data"],
+        timestamp,
+        summary[:500],
+        ", ".join(products),
+        json.dumps({"products": products}),
     )
 
-    items = result.get("items", [])
-    if items:
-        for item in items:
-            item["metadata"]["user_event_id"] = str(event_id)
-        await vec.add(user_id, items)
-        logger.info("Indexed {} items into vector DB", len(items))
+    # Phase C: Invoke ingest agent
+    tasks_dir = memory_store.root / ".tasks" / "ingest-input"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
 
-    analysis = json.loads(result.get("analysis_data", "{}"))
-    tip_data = await generate_proactive_tip(
-        user_id, db, vec, llm,
-        prompts_dir=prompts_dir,
-        data_dir=data_dir,
-        current_events=analysis.get("events", []),
-        current_timestamp=result.get("timestamp"),
-        current_summary=analysis.get("summary", ""),
-        latest_observation=result.get("latest_screen_observation"),
-        latest_screen_image_path=result.get("latest_screen_image_path"),
-        max_goals=max_tip_goals,
-        max_events=max_tip_events,
-        max_traits=max_tip_traits,
-        max_summary_chars=tip_summary_chars,
-        trait_similarity_threshold=trait_similarity_threshold,
+    (tasks_dir / "products.txt").write_text(
+        "\n".join(products), encoding="utf-8",
     )
 
-    if tip_data and tip_data.get("tips"):
-        await db.update_event_tip(
-            user_id, event_id,
-            json.dumps(tip_data, ensure_ascii=False),
+    (tasks_dir / "context.json").write_text(
+        json.dumps({"timestamp": timestamp, "event_id": event_id}), encoding="utf-8",
+    )
+
+    ingest_prompt = render_prompt(
+        config.prompts_dir, "ingest_prompt.md",
+        memory_path="memory",
+    )
+    ingest_result = await invoke_agent(
+        task="ingest",
+        memory_dir=memory_store.root,
+        prompt=ingest_prompt,
+        serve_port=config.agent_serve_port,
+        timeout=config.agent_timeout,
+    )
+    if ingest_result.get("status") == "ok":
+        logger.info("Memory ingest completed: {}", ingest_result)
+    else:
+        logger.warning("Memory ingest issue: {}", ingest_result)
+
+    # Phase D: Follow-up tip generation in the same opencode session
+    session_id = ingest_result.get("session_id")
+    if session_id:
+        tip_result = await invoke_agent_continue(
+            session_id=session_id,
+            memory_dir=memory_store.root,
+            prompt=TIP_PROMPT,
+            serve_port=config.agent_serve_port,
+            timeout=config.agent_timeout,
         )
-        logger.info("Stored proactive tip for event {}", event_id)
+        if tip_result.get("status") == "ok":
+            new_tips = memory_store.list_tips(limit=3)
+            if new_tips:
+                logger.info("Generated {} tip(s) in session {}", len(new_tips), session_id)
 
-    result["event_id"] = event_id
-    return result, tip_data
+                if config.notify_on_tips and notifier:
+                    first = new_tips[0]
+                    goal = first.get("goal", "you")[:50]
+                    summary = first.get("summary", "")[:120]
+                    title = f"Tip for: {goal}"
+                    body = summary
+                    if len(new_tips) > 1:
+                        body += f" (+{len(new_tips) - 1} more)"
+                    await notifier.notify(title, body)
+            else:
+                logger.info("No tips generated in session {}", session_id)
+        else:
+            logger.warning("Tip follow-up issue: {}", tip_result)
+    else:
+        logger.warning("No session_id from ingest, skipping inline tips")
+
+    result = {"event_id": event_id, "summary": summary[:200], "products": products}
+    return result
 
 
 async def run_processing_loop(
     db: DBStore,
-    vec: VectorStore,
     llm: LLMProvider,
     user_id: str,
     config: Config,
     stop_event: asyncio.Event,
+    memory_store: MemoryStore,
+    observers: list,
     notifier: Notifier | None = None,
     pause_gate=None,
 ) -> None:
-    """Run processing cycles on interval until stop_event is set."""
-    while not stop_event.is_set():
-        try:
-            async with asyncio.timeout(config.process_interval):
-                await stop_event.wait()
-            break
-        except TimeoutError:
-            if pause_gate and await pause_gate.is_paused():
-                continue
-            try:
-                result, tip_data = await run_processing_cycle(
-                    user_id, db, vec, llm,
-                    prompts_dir=config.prompts_dir,
-                    data_dir=config.data_dir,
-                    confidence_threshold=config.confidence_threshold,
-                    merge_threshold=config.merge_threshold,
-                    max_artifacts=config.max_artifacts,
-                    max_evidence_entries=config.max_evidence_entries,
-                    max_tip_goals=config.max_tip_goals,
-                    max_tip_events=config.max_tip_events,
-                    max_tip_traits=config.max_tip_traits,
-                    tip_summary_chars=config.tip_summary_chars,
-                    trait_similarity_threshold=config.trait_similarity_threshold,
-                )
-                if result:
-                    logger.info("Saved event: {}", result["summary"][:100])
-                else:
-                    logger.info("No new observations — skipping process cycle")
+    """Run processing cycles on interval until stop_event is set.
 
-                if tip_data and tip_data.get("tips") and config.notify_on_tips and notifier:
-                    tips = tip_data["tips"]
-                    first = tips[0]
-                    title = f"Tip for: {first.get('goal', 'you')[:50]}"
-                    body = first.get("tip_summary", "")[:120]
-                    if len(tips) > 1:
-                        body += f" (+{len(tips) - 1} more)"
-                    await notifier.notify(title, body)
-            except Exception as e:
-                logger.exception("Process cycle failed: {}", e)
+    Uses a ticker that marks the task PENDING every interval and a
+    worker that picks it up, runs the cycle, and returns to monitoring.
+    Processing and tips share the same opencode session — tips are
+    generated as a follow-up after ingest completes.
+    """
+    task = IntervalTask(
+        "process",
+        config.process_interval,
+        pause_gate=pause_gate,
+        stop_event=stop_event,
+    )
+
+    async def do_work():
+        result = await run_processing_cycle(
+            user_id, db, llm, memory_store, observers,
+            prompts_dir=config.prompts_dir,
+            data_dir=config.data_dir,
+            config=config,
+            notifier=notifier,
+        )
+        if result:
+            logger.info("Saved event: {}", result.get("summary", "")[:100])
+        else:
+            logger.info("No new products — skipping process cycle")
+
+    await task.run(do_work)

@@ -1,12 +1,12 @@
-import io
 import datetime
+import io
 import json
 import uuid
 from pathlib import Path
 from typing import ClassVar
 
-from PIL import Image
 from loguru import logger
+from PIL import Image
 
 from hypogum.agent.observers.base import Observer
 
@@ -47,7 +47,7 @@ class CameraObserver(Observer):
             img.save(buf, format="JPEG", quality=quality)
             image_bytes = buf.getvalue()
 
-            now = datetime.datetime.now(datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.UTC)
             timestamp_str = now.isoformat()
             date_str = timestamp_str[:10]
             safe_ts = timestamp_str.replace(":", "-").replace("T", "_")

@@ -29,7 +29,7 @@ hypogum/
 │   ├── __init__.py    run_agent() — observer + processing loops
 │   ├── db.py          HTTP db provider (RemoteDBStore + RemoteVectorStore → `hypogum db`)
 │   ├── observers/     ScreenObserver (mss), CameraObserver (cv2)
-│   ├── processor/     analyzer.py → tips.py → pipeline.py
+│   ├── processor/     pipeline.py (ingest + tips inline via opencode session)
 │   ├── prompts/       analysis + proactive prompt templates
 │   └── utils/         Notifier, WindowDetector, activity/idle detection, image dedup
 ├── db/                Standalone `hypogum db` service + data layer
@@ -54,17 +54,16 @@ ScreenObserver ─┐
 CameraObserver ─┘
                        │
                        ▼
-              process_pending_observations()
+              [Processing Loop, 600s]
                   ┌─ multimodal LLM analysis
-                  ├─ embed items
-                  ├─ deduplicate (cosine similarity)
-                  └─ store in DB + vector DB
+                  ├─ save event to DB
+                  ├─ ingest into memory (opencode session)
+                  └─ follow-up tips in same session
                        │
                        ▼
-              generate_proactive_tip()
-                  ┌─ search matching goals
-                  ├─ search matching traits
-                  └─ LLM generates actionable tips ⟶ desktop notification
+              memory/tips/<goal>/<timestamp>-<slug>.md
+                  ┌─ each tip is a markdown file
+                  └─ desktop notification for latest tip
 ```
 
 ## CLI
@@ -72,7 +71,7 @@ CameraObserver ─┘
 | Command | Purpose |
 |---|---|
 | `hypogum db` | Start the standalone db service: relational store (local SQLite or remote Postgres/MySQL via DSN) + local ChromaDB (FastAPI, `/api/v1/`) |
-| `hypogum agent` | Run observer → process → tip background loop (connects to `hypogum db` over HTTP) |
+| `hypogum agent` | Run observer + processing loop (ingest + tips inline in same LLM session, connects to `hypogum db` over HTTP) |
 | `hypogum mcp --transport stdio` | MCP endpoint for Claude Desktop / VS Code |
 | `hypogum mcp --transport http --port 8080` | MCP endpoint for remote AI agents |
 
@@ -100,7 +99,7 @@ All settings via environment variables (see `.env.example`). Key ones:
 | `HYPOGUM_SCREEN_DEDUP_ENABLED` | `true` | Discard a screenshot too similar to the previous saved one |
 | `HYPOGUM_SCREEN_DEDUP_THRESHOLD` | `10` | Max dHash Hamming distance treated as a duplicate (0..hash_size²) |
 | `HYPOGUM_SCREEN_DEDUP_HASH_SIZE` | `16` | dHash grid size; higher = more sensitive to small on-screen changes |
-| `HYPOGUM_PROCESS_INTERVAL` | `300` | Seconds between analysis cycles |
+| `HYPOGUM_PROCESS_INTERVAL` | `600` | Seconds between processing cycles (describe → ingest → tips inline) |
 | `HYPOGUM_PAUSE_WHEN_LOCKED` | `true` | Pause observing + processing while the workstation is locked |
 | `HYPOGUM_PAUSE_WHEN_IDLE` | `false` | Pause once there's no user input for `HYPOGUM_IDLE_THRESHOLD` seconds |
 | `HYPOGUM_IDLE_THRESHOLD` | `300` | Idle seconds before pausing |

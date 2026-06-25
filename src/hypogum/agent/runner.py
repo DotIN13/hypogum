@@ -2,26 +2,26 @@ import asyncio
 
 from loguru import logger
 
+from hypogum.agent.observers.base import Observer
+from hypogum.agent.processor.pipeline import run_processing_loop
+from hypogum.agent.utils.activity_detector import PauseGate
+from hypogum.agent.utils.notifier import Notifier
 from hypogum.config import Config
 from hypogum.db.relational.base import DBStore
-from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
-from hypogum.agent.observers.base import Observer
-from hypogum.agent.utils.notifier import Notifier
-from hypogum.agent.utils.activity_detector import PauseGate
-from hypogum.agent.processor.pipeline import run_processing_loop
+from hypogum.memory.store import MemoryStore
 
 
 async def run_agent(
     config: Config,
     db: DBStore,
-    vec: VectorStore,
     llm: LLMProvider,
+    memory_store: MemoryStore,
     observers: list[Observer],
     notifier: Notifier | None = None,
     pause_gate: PauseGate | None = None,
 ) -> None:
-    """Main background agent loop: spawns observer tasks + processing loop."""
+    """Main background agent loop: spawns observer tasks + processing loop (ingest + tips inline)."""
 
     user_id = config.user_id
     stop_event = asyncio.Event()
@@ -53,7 +53,10 @@ async def run_agent(
         logger.info("Started {} observer (every {}s)", obs.source_type, obs.interval)
 
     tasks.append(asyncio.create_task(
-        run_processing_loop(db, vec, llm, user_id, config, stop_event, notifier,
+        run_processing_loop(db, llm, user_id, config, stop_event,
+                            memory_store=memory_store,
+                            observers=observers,
+                            notifier=notifier,
                             pause_gate=pause_gate)
     ))
 

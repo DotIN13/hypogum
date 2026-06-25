@@ -1,23 +1,18 @@
-import json
-import datetime
-import uuid
-import time
-
 from loguru import logger
 
+from hypogum.agent.observers.screen import ScreenObserver
 from hypogum.config import Config
 from hypogum.db.relational.base import DBStore
-from hypogum.db.vector.base import VectorStore
 from hypogum.llm.base import LLMProvider
-from hypogum.agent.processor.analyzer import _merge_evidence
-from hypogum.agent.observers.screen import ScreenObserver
+from hypogum.memory.search import search_memory
+from hypogum.memory.store import MemoryStore
 
 
 def create_mcp_server(
     config: Config,
     db: DBStore,
-    vec: VectorStore,
     llm: LLMProvider,
+    memory_store: MemoryStore,
     user_id: str,
 ):
     """Build a FastMCP server with hypogum memory tools."""
@@ -27,23 +22,21 @@ def create_mcp_server(
     mcp = FastMCP("hypogum")
 
     @mcp.tool()
-    async def query_memory(query: str, category: str | None = None, limit: int = 10) -> list[dict]:
-        """Semantic search across vector memory: personalities, skills, interests, events, goals, etc."""
-        embeddings = await llm.embed([query])
-        results = await vec.search(
-            user_id, embeddings[0], limit=limit, item_type=category,
-        )
-        return results
+    async def memory_search(query: str, limit: int = 10) -> list[dict]:
+        """Search memory pages with ripgrep. Returns matching snippets with file and line info."""
+        return search_memory(query, memory_store.root, max_results=limit)
 
     @mcp.tool()
-    async def add_memory(
+    async def memory_add(
         content: str,
         category: str,
         evidence: str | None = None,
         confidence: int = 5,
         lifespan: int = 5,
     ) -> dict:
-        """Add an entry to vector memory."""
+        """Create or update a memory page."""
+        import datetime
+
         valid_categories = [
             "goal", "event", "personality", "skill", "interest",
             "preference", "ownership", "relationship", "weakness",
@@ -53,65 +46,92 @@ def create_mcp_server(
 
         confidence = max(1, min(10, int(confidence)))
         lifespan = max(1, min(10, int(lifespan)))
-        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        content_text = f"{category}: {content}"
-        embeddings = await llm.embed([content_text])
-        embedding = embeddings[0]
+        now = datetime.datetime.now(datetime.UTC)
+        timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        date_str = timestamp[:10]
 
-        new_evidence = json.dumps(
-            [{"text": evidence or "manually added via MCP", "timestamp": ts}],
-            ensure_ascii=False,
-        )
+        subtype_map = {
+            "personality": "personality", "skill": "skill", "interest": "interest",
+            "preference": "preference", "ownership": "ownership",
+            "relationship": "relationship", "weakness": "weakness",
+        }
+        subtype = subtype_map.get(category)
 
-        if category == "event":
-            existing = None
+        category_dir = {
+            "goal": "goals", "event": "events",
+        }
+        subdir = category_dir.get(category, "traits")
+
+        slug = content.lower().replace(" ", "_").replace("/", "_")[:60]
+        path = f"{subdir}/{slug}.md"
+
+        existing_content = ""
+        try:
+            existing_content = memory_store.read_page(path)
+        except FileNotFoundError:
+            pass
+
+        ev = evidence or "manually added via MCP"
+        evidence_entry = f"- [{date_str}] {ev}"
+
+        if existing_content:
+            new_body = existing_content + "\n" + evidence_entry + "\n"
         else:
-            existing, _, _ = await vec.find_similar(
-                user_id, embedding, category, config.merge_threshold,
-            )
+            new_body = f"""---
+type: {"goal" if category == "goal" else "event" if category == "event" else "trait"}
+{'subtype: ' + subtype if subtype else ''}
+confidence: {confidence}
+lifespan: {lifespan}
+last_updated: {timestamp}
+evidence_count: 1
+tags: []
+related: []
+---
 
-        if existing:
-            merged_evidence = _merge_evidence(
-                existing.get("evidence", ""), new_evidence,
-            )
-            merged_meta = {
-                "type": category,
-                "content": content_text,
-                "timestamp": existing.get("timestamp", ts),
-                "user_id": user_id,
-                "user_event_id": existing.get("user_event_id", "0"),
-                "confidence": max(confidence, int(existing.get("confidence", 0))),
-                "evidence": merged_evidence,
-                "lifespan": max(lifespan, int(existing.get("lifespan", 0))),
-            }
-            await vec.update_metadata(user_id, existing["id"], merged_meta)
-            logger.info("Memory merged [{}]: {}", category, content[:80])
-            return {"status": "ok", "merged": True, "id": existing["id"]}
-        else:
-            mem_id = f"mcp_{uuid.uuid4().hex[:12]}"
-            await vec.add(user_id, [{
-                "id": mem_id,
-                "vector": embedding,
-                "metadata": {
-                    "type": category,
-                    "content": content_text,
-                    "timestamp": ts,
-                    "user_id": user_id,
-                    "user_event_id": "0",
-                    "confidence": confidence,
-                    "evidence": new_evidence,
-                    "lifespan": lifespan,
-                },
-            }])
-            logger.info("Memory added [{}]: {}", category, content[:80])
-            return {"status": "ok", "merged": False, "id": mem_id}
+# {content}
+
+{content}
+
+## Evidence
+{evidence_entry}
+
+## History
+- {date_str}: created via MCP
+"""
+
+        memory_store.write_page(path, new_body)
+        logger.info("Memory {}: {} [{}]", "updated" if existing_content else "added", content[:80], path)
+        return {"status": "ok", "path": path, "created": not existing_content}
 
     @mcp.tool()
-    async def get_tips(limit: int = 10, offset: int = 0) -> list[dict]:
-        """Fetch recent proactive tips."""
-        items, _ = await db.get_tips(user_id, limit, offset)
-        return items
+    async def memory_read(path: str) -> dict:
+        """Read a memory page by path (e.g. 'traits/Python.md')."""
+        try:
+            content = memory_store.read_page(path)
+            return {"path": path, "content": content}
+        except FileNotFoundError:
+            return {"error": f"Page not found: {path}"}
+
+    @mcp.tool()
+    async def memory_list(subdir: str | None = None) -> list[str]:
+        """List memory pages, optionally filtered by subdirectory (entities, traits, events, goals, tips)."""
+        return memory_store.list_pages(subdir)
+
+    @mcp.tool()
+    async def memory_index() -> str:
+        """Read index.md — the catalog of all memory pages."""
+        return memory_store.get_index()
+
+    @mcp.tool()
+    async def memory_log(limit: int = 50) -> str:
+        """Read log.md — the chronological audit trail."""
+        return memory_store.get_log(limit=limit)
+
+    @mcp.tool()
+    async def get_tips(limit: int = 10) -> list[dict]:
+        """Fetch recent proactive tips from the file-based tip store."""
+        return memory_store.list_tips(limit=limit)
 
     @mcp.tool()
     async def get_insights(limit: int = 10, offset: int = 0) -> list[dict]:
@@ -122,7 +142,7 @@ def create_mcp_server(
     @mcp.tool()
     async def add_goal(content: str, evidence: str | None = None) -> dict:
         """Add a goal to track."""
-        return await add_memory(content=content, category="goal", evidence=evidence, confidence=5, lifespan=8)
+        return await memory_add(content=content, category="goal", evidence=evidence, confidence=5, lifespan=8)
 
     @mcp.tool()
     async def capture_now() -> dict:

@@ -7,16 +7,38 @@ from loguru import logger
 
 
 class WindowDetector(ABC):
-    """Abstract cross-platform active window title detector."""
+    """Abstract cross-platform window detection."""
 
     @abstractmethod
     async def get_active_windows(self) -> list[str]:
         """Return a list of currently visible window titles. Best-effort — may be empty."""
         ...
 
+    async def get_active_window_title(self) -> str | None:
+        """Return the title of the frontmost (focused) window, or None."""
+        return None
+
 
 class WindowsWindowDetector(WindowDetector):
     """Windows window titles via ctypes + user32.dll (no external deps)."""
+
+    async def get_active_window_title(self) -> str | None:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length == 0:
+                return None
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value.strip()
+            return title if title else None
+        except Exception as e:
+            logger.debug("Windows active window detection failed: {}", e)
+            return None
 
     async def get_active_windows(self) -> list[str]:
         try:
@@ -55,6 +77,27 @@ class WindowsWindowDetector(WindowDetector):
 class MacOSWindowDetector(WindowDetector):
     """macOS window titles via osascript (AppleScript)."""
 
+    async def get_active_window_title(self) -> str | None:
+        if not shutil.which("osascript"):
+            return None
+        try:
+            script = (
+                'tell application "System Events" to '
+                'get name of front window of first process '
+                'whose frontmost is true'
+            )
+            proc = await asyncio.create_subprocess_exec(
+                "osascript", "-e", script,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0 and stdout:
+                return stdout.decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            logger.debug("macOS active window detection failed: {}", e)
+        return None
+
     async def get_active_windows(self) -> list[str]:
         if not shutil.which("osascript"):
             return []
@@ -82,6 +125,22 @@ class MacOSWindowDetector(WindowDetector):
 
 class LinuxWindowDetector(WindowDetector):
     """Linux window titles via xdotool or wmctrl."""
+
+    async def get_active_window_title(self) -> str | None:
+        if not shutil.which("xdotool"):
+            return None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "xdotool", "getactivewindow", "getwindowname",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await proc.communicate()
+            if proc.returncode == 0 and stdout:
+                return stdout.decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            logger.debug("Linux active window detection failed: {}", e)
+        return None
 
     async def get_active_windows(self) -> list[str]:
         if shutil.which("xdotool"):

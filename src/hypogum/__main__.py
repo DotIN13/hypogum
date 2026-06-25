@@ -5,7 +5,6 @@ from loguru import logger
 
 from hypogum.config import Config
 
-
 # ── providers / factories ────────────────────
 
 def _make_db(config: Config):
@@ -15,11 +14,11 @@ def _make_db(config: Config):
     return RemoteDBStore(config.db_url)
 
 
-def _make_vec(config: Config):
-    """Agent/MCP vector provider: always HTTP to the `hypogum db` service."""
-    from hypogum.agent.db import RemoteVectorStore
-    assert config.db_url, "HYPOGUM_DB_URL required (the `hypogum db` service URL)"
-    return RemoteVectorStore(config.db_url)
+def _make_memory_store(config: Config):
+    """Memory store: local file-based markdown page CRUD."""
+    from hypogum.memory.store import MemoryStore
+    config.memory_dir.mkdir(parents=True, exist_ok=True)
+    return MemoryStore(config.memory_dir)
 
 
 def _make_llm(config: Config):
@@ -29,7 +28,6 @@ def _make_llm(config: Config):
         return GeminiProvider(
             api_key=config.google_api_key,
             model=config.llm_model,
-            embedding_model=config.embedding_model,
         )
     elif config.llm_provider == "openai":
         from hypogum.llm.openai import OpenAIProvider
@@ -37,33 +35,13 @@ def _make_llm(config: Config):
         return OpenAIProvider(
             api_key=config.openai_api_key,
             model=config.llm_model,
-            embedding_model=config.embedding_model,
         )
     elif config.llm_provider == "anthropic":
         from hypogum.llm.anthropic import AnthropicProvider
         assert config.anthropic_api_key, "ANTHROPIC_API_KEY required for Anthropic provider"
-
-        embedding_provider = None
-        if config.embedding_provider:
-            assert config.embedding_provider in ("gemini", "openai"), \
-                f"Unsupported embedding_provider: {config.embedding_provider}"
-            if config.embedding_provider == "gemini":
-                from hypogum.llm.gemini import GeminiProvider
-                embedding_provider = GeminiProvider(
-                    api_key=config.google_api_key or "",
-                    embedding_model=config.embedding_model or "gemini-embedding-2",
-                )
-            elif config.embedding_provider == "openai":
-                from hypogum.llm.openai import OpenAIProvider
-                embedding_provider = OpenAIProvider(
-                    api_key=config.openai_api_key or "",
-                    embedding_model=config.embedding_model or "text-embedding-3-small",
-                )
-
         return AnthropicProvider(
             api_key=config.anthropic_api_key,
             model=config.llm_model,
-            embedding_provider=embedding_provider,
         )
     raise ValueError(f"Unknown LLM provider: {config.llm_provider}")
 
@@ -97,8 +75,8 @@ def _make_auth(config: Config):
 
 
 def _make_observers(config: Config):
-    from hypogum.agent.observers.screen import ScreenObserver
     from hypogum.agent.observers.camera import CameraObserver
+    from hypogum.agent.observers.screen import ScreenObserver
     from hypogum.agent.utils.window_detector import create_window_detector
 
     window_detector = create_window_detector() if config.observe_detect_windows else None
@@ -129,7 +107,10 @@ def _make_notifier(config: Config):
 def _make_pause_gate(config: Config):
     if not (config.pause_when_locked or config.pause_when_idle):
         return None
-    from hypogum.agent.utils.activity_detector import create_activity_detector, PauseGate
+    from hypogum.agent.utils.activity_detector import (
+        PauseGate,
+        create_activity_detector,
+    )
     return PauseGate(
         create_activity_detector(),
         pause_when_locked=config.pause_when_locked,
@@ -141,29 +122,27 @@ def _make_pause_gate(config: Config):
 # ── CLI commands ─────────────────────────────
 
 def cmd_db(args):
-    """Run the standalone db service: relational (local/remote via DSN) + local ChromaDB."""
+    """Run the standalone db service: relational (local/remote via DSN)."""
     config = Config.from_env()
 
     from hypogum.db.relational.engine import SQLAlchemyDBStore
-    from hypogum.db.vector.chroma import ChromaVectorStore
     from hypogum.db.server import run_db_service
 
     assert config.db_dsn, "HYPOGUM_DB_DSN could not be resolved"
     db = SQLAlchemyDBStore(config.db_dsn)
-    vec = ChromaVectorStore(config.chroma_dir)
     auth = _make_auth(config)
 
     host = args.host if args.host is not None else config.db_host
     port = args.port if args.port is not None else config.db_port
-    logger.info("Starting `hypogum db` (dsn={}, chroma={})", config.db_dsn, config.chroma_dir)
-    run_db_service(host, port, db=db, vec=vec, auth=auth)
+    logger.info("Starting `hypogum db` (dsn={})", config.db_dsn)
+    run_db_service(host, port, db=db, auth=auth)
 
 
 def cmd_agent(args):
     config = Config.from_env()
     db = _make_db(config)
-    vec = _make_vec(config)
     llm = _make_llm(config)
+    memory_store = _make_memory_store(config)
     observers = _make_observers(config)
     notifier = _make_notifier(config)
     pause_gate = _make_pause_gate(config)
@@ -171,8 +150,8 @@ def cmd_agent(args):
     from hypogum.agent import run_agent
 
     async def _run():
-        await run_agent(config, db, vec, llm, observers, notifier=notifier,
-                        pause_gate=pause_gate)
+        await run_agent(config, db, llm, memory_store, observers,
+                        notifier=notifier, pause_gate=pause_gate)
 
     try:
         asyncio.run(_run())
@@ -183,11 +162,11 @@ def cmd_agent(args):
 def cmd_mcp(args):
     config = Config.from_env()
     db = _make_db(config)
-    vec = _make_vec(config)
     llm = _make_llm(config)
+    memory_store = _make_memory_store(config)
 
     from hypogum.mcp_server import create_mcp_server
-    mcp = create_mcp_server(config, db, vec, llm, config.user_id)
+    mcp = create_mcp_server(config, db, llm, memory_store, config.user_id)
 
     if args.transport == "stdio":
         mcp.run(transport="stdio")
@@ -207,7 +186,7 @@ def main():
     )
     sub = parser.add_subparsers(dest="command")
 
-    p_db = sub.add_parser("db", help="Start the standalone db service (relational + ChromaDB)")
+    p_db = sub.add_parser("db", help="Start the standalone db service (relational store)")
     p_db.add_argument("--host", default=None)
     p_db.add_argument("--port", type=int, default=None)
 

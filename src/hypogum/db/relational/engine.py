@@ -1,6 +1,5 @@
 import asyncio
 import datetime
-from datetime import timezone as tz
 
 from loguru import logger
 from sqlalchemy import (
@@ -114,7 +113,7 @@ class SQLAlchemyDBStore(DBStore):
                     select(func.count()).select_from(users).where(users.c.id == "default")
                 )
                 if not count:
-                    now = datetime.datetime.now(tz.utc).isoformat()
+                    now = datetime.datetime.now(datetime.UTC).isoformat()
                     await conn.execute(insert(users).values(
                         id="default", name="Default User", settings="{}", created_at=now,
                     ))

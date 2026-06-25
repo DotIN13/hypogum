@@ -1,6 +1,6 @@
 import asyncio
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
@@ -16,7 +16,7 @@ class ObserverCapture:
 
 
 class Observer(ABC):
-    """Captures from a source (screen/camera) and persists to DBStore."""
+    """Collects raw data (observe) and produces text descriptions (describe)."""
     source_type: ClassVar[str]
     default_interval: ClassVar[int] = 60
 
@@ -28,8 +28,17 @@ class Observer(ABC):
         self, db, user_id: str, data_dir: Path, *,
         max_width: int = 1920, quality: int = 85,
     ) -> int | None:
-        """Capture → save JPEG → db.save_observation() → return obs_id."""
+        """Capture raw data → persist to DBStore → return obs_id or None."""
         ...
+
+    async def describe(
+        self, db, user_id: str, data_dir: Path, *,
+        llm=None, prompts_dir: Path | None = None,
+    ) -> str | None:
+        """Convert unprocessed observations into a product .md file.
+        Returns the relative product path or None.
+        Default implementation returns None (observer has no describe step)."""
+        return None
 
     async def run_loop(
         self, db, user_id: str, data_dir: Path, *,
@@ -44,7 +53,7 @@ class Observer(ABC):
         """
         if not (pause_gate and await pause_gate.is_paused()):
             await self._safe_observe(db, user_id, data_dir,
-                                     max_width=max_width, quality=quality)
+                                      max_width=max_width, quality=quality)
         while not stop_event.is_set():
             try:
                 async with asyncio.timeout(self.interval):
@@ -54,7 +63,7 @@ class Observer(ABC):
                 if pause_gate and await pause_gate.is_paused():
                     continue
                 await self._safe_observe(db, user_id, data_dir,
-                                         max_width=max_width, quality=quality)
+                                          max_width=max_width, quality=quality)
 
     async def _safe_observe(self, db, user_id: str, data_dir: Path, *,
                             max_width: int, quality: int) -> int | None:
@@ -62,7 +71,7 @@ class Observer(ABC):
         without killing the observer loop."""
         try:
             return await self.observe(db, user_id, data_dir,
-                                      max_width=max_width, quality=quality)
+                                       max_width=max_width, quality=quality)
         except Exception as e:
             logger.exception("[{}] observe iteration failed: {}", self.source_type, e)
             return None

@@ -5,15 +5,16 @@ import uuid
 from pathlib import Path
 from typing import ClassVar
 
-from PIL import Image
 from loguru import logger
+from PIL import Image
 
 from hypogum.agent.observers.base import Observer
 from hypogum.agent.utils.image_dedup import dhash, hamming_distance
 
 
 class ScreenObserver(Observer):
-    """Captures the primary monitor using mss and persists as JPEG."""
+    """Captures the primary monitor using mss and persists as JPEG.
+    Describe step generates rich text descriptions via multimodal LLM."""
 
     source_type: ClassVar[str] = "screen"
     default_interval: ClassVar[int] = 60
@@ -29,6 +30,25 @@ class ScreenObserver(Observer):
         self._dedup_threshold = dedup_threshold
         self._dedup_hash_size = dedup_hash_size
         self._prev_hash: int | None = None
+
+    async def describe(
+        self, db, user_id: str, data_dir: Path, *,
+        llm=None, prompts_dir: Path | None = None,
+    ) -> str | None:
+        """Load pending screen observations, call LLM for rich description,
+        save as product .md file. Returns relative product path or None."""
+        from hypogum.agent.processor.describe import (
+            describe_pending_screen_observations,
+        )
+        if llm is None:
+            logger.warning("[ScreenObserver] describe requires an LLM")
+            return None
+        return await describe_pending_screen_observations(
+            user_id=user_id, db=db, llm=llm,
+            prompts_dir=prompts_dir or Path("."),
+            data_dir=data_dir,
+            max_artifacts=20,
+        )
 
     async def _load_prev_hash_from_db(self, db, user_id: str, data_dir: Path) -> int | None:
         """Seed the dedup baseline from the last stored screen image (e.g. after a restart)."""
@@ -87,7 +107,7 @@ class ScreenObserver(Observer):
             img.save(buf, format="JPEG", quality=quality)
             image_bytes = buf.getvalue()
 
-            now = datetime.datetime.now(datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.UTC)
             timestamp_str = now.isoformat()
             date_str = timestamp_str[:10]
             safe_ts = timestamp_str.replace(":", "-").replace("T", "_")
@@ -102,10 +122,12 @@ class ScreenObserver(Observer):
             artifact_path.write_bytes(image_bytes)
 
             window_titles: list[str] = []
+            active_window: str | None = None
             if self._window_detector:
                 try:
                     window_titles = await self._window_detector.get_active_windows()
                     window_titles = window_titles[:50]
+                    active_window = await self._window_detector.get_active_window_title()
                 except Exception as e:
                     logger.debug("Window detection skipped: {}", e)
 
@@ -120,6 +142,7 @@ class ScreenObserver(Observer):
                 "observer": "screen",
                 "timestamp": timestamp_str,
                 "windows": window_titles,
+                "active_window": active_window,
                 "prompt_text": prompt_text,
                 "artifact_path": f"../artifacts/{stem}.jpg",
             }
