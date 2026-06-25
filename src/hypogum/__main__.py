@@ -18,7 +18,7 @@ def _make_memory_store(config: Config):
     """Memory store: local file-based markdown page CRUD."""
     from hypogum.memory.store import MemoryStore
     config.memory_dir.mkdir(parents=True, exist_ok=True)
-    return MemoryStore(config.memory_dir)
+    return MemoryStore(config.memory_dir, tz_name=config.timezone)
 
 
 def _make_llm(config: Config):
@@ -77,6 +77,7 @@ def _make_auth(config: Config):
 def _make_observers(config: Config):
     from hypogum.agent.observers.camera import CameraObserver
     from hypogum.agent.observers.screen import ScreenObserver
+    from hypogum.agent.observers.user_input import UserInputObserver
     from hypogum.agent.utils.window_detector import create_window_detector
 
     window_detector = create_window_detector() if config.observe_detect_windows else None
@@ -93,6 +94,11 @@ def _make_observers(config: Config):
     if config.observe_camera_enabled:
         observers.append(CameraObserver(
             interval=config.observe_camera_interval,
+        ))
+    if config.observe_user_input_enabled:
+        observers.append(UserInputObserver(
+            inbox_dir=config.memory_dir / ".tasks" / "user-input",
+            interval=config.user_input_interval,
         ))
     return observers
 
@@ -176,6 +182,71 @@ def cmd_mcp(args):
         mcp.run(transport="sse", host=host, port=port)
 
 
+def cmd_note(args):
+    """Queue a free-text note for the UserInputObserver to ingest."""
+    import uuid
+
+    from hypogum.config import now_local
+
+    config = Config.from_env()
+    inbox = config.memory_dir / ".tasks" / "user-input"
+    inbox.mkdir(parents=True, exist_ok=True)
+
+    ts = now_local(config.timezone).strftime("%Y-%m-%dT%H-%M-%S")
+    path = inbox / f"note_{ts}_{uuid.uuid4().hex[:6]}.md"
+    body = (f"# {args.title}\n\n" if args.title else "") + args.text + "\n"
+    path.write_text(body, encoding="utf-8")
+    print(f"Queued note → {path}")
+
+
+def cmd_calendar(args):
+    """Export or display the file-based calendar."""
+    from pathlib import Path
+
+    config = Config.from_env()
+
+    if args.action == "export":
+        from hypogum.calendar.ics import export_ics
+
+        out = Path(args.out) if args.out else config.data_dir / "calendar.ics"
+        count = export_ics(config.memory_dir, out, days=args.days)
+        print(f"Exported {count} event(s) → {out}")
+    elif args.action == "show":
+        from hypogum.calendar.parse import load_entries
+
+        entries = load_entries(config.memory_dir)
+        if args.date:
+            entries = [e for e in entries if e.date == args.date]
+        if args.bucket:
+            entries = [e for e in entries if e.bucket == args.bucket]
+        entries.sort(key=lambda e: (e.date, e.start))
+        if not entries:
+            print("No calendar entries.")
+            return
+        for e in entries:
+            end = e.end or ("recurs" if e.recurrence else "open")
+            start = e.start[11:16] if len(e.start) >= 16 else e.start
+            end = end[11:16] if len(end) >= 16 else end
+            flag = "*" if e.significant else " "
+            print(f"{flag} {e.date} {start}-{end} [{e.bucket}/{e.source}] "
+                  f"{e.category}: {e.title}")
+    elif args.action == "view":
+        import datetime as _dt
+
+        from hypogum.calendar.view import export_view
+        from hypogum.config import resolve_timezone
+
+        tz = resolve_timezone(config.timezone)
+        today = _dt.datetime.now(tz).date()
+        out_dir = Path(args.out_dir) if args.out_dir else config.memory_dir
+        res = export_view(config.memory_dir, out_dir, today=today,
+                          tz_label=config.timezone or "", png=not args.no_png)
+        kind = "+ PNGs" if res["png"] else "(markdown only)"
+        print(
+            f"Rendered calendar view for {res['entries']} event(s) {kind} → {out_dir}"
+        )
+
+
 # ── entry point ──────────────────────────────
 
 
@@ -197,6 +268,21 @@ def main():
     p_mcp.add_argument("--host", default="0.0.0.0")
     p_mcp.add_argument("--port", type=int, default=8080)
 
+    p_note = sub.add_parser("note", help="Queue a free-text note for the agent to ingest")
+    p_note.add_argument("text", help="The note text (e.g. 'meeting next Tue 2-3pm with Alice')")
+    p_note.add_argument("--title", default=None)
+
+    p_cal = sub.add_parser("calendar", help="Export or display the calendar")
+    p_cal.add_argument("action", choices=["export", "show", "view"])
+    p_cal.add_argument("--out", default=None, help="ICS output path (export)")
+    p_cal.add_argument("--days", type=int, default=None, help="Limit to last N days (export)")
+    p_cal.add_argument("--date", default=None, help="Filter to a YYYY-MM-DD day (show)")
+    p_cal.add_argument("--bucket", default=None,
+                       choices=["suggested", "planned", "observed"],
+                       help="Filter to a lifecycle bucket (show)")
+    p_cal.add_argument("--out-dir", default=None, help="Output dir for the view (view)")
+    p_cal.add_argument("--no-png", action="store_true", help="Skip PNGs (view)")
+
     args = parser.parse_args()
 
     if args.command == "db":
@@ -205,6 +291,10 @@ def main():
         cmd_agent(args)
     elif args.command == "mcp":
         cmd_mcp(args)
+    elif args.command == "note":
+        cmd_note(args)
+    elif args.command == "calendar":
+        cmd_calendar(args)
     else:
         parser.print_help()
 

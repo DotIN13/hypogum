@@ -74,32 +74,5 @@ class RemoteDBStore(_HTTPClientMixin, DBStore):
         result = await self._get("/observations/latest", type=obs_type)
         return result.get("item")
 
-    # ── events ────────────────────────────────
-
-    async def save_event(self, user_id: str, timestamp: str, summary: str,
-                         transcripts: str, context: str) -> int:
-        result = await self._post("/events", {
-            "timestamp": timestamp,
-            "summary": summary,
-            "transcripts": transcripts,
-            "context": context,
-        })
-        return result["id"]
-
-    async def get_events(self, user_id: str, limit: int = 15, offset: int = 0) -> tuple[list[dict], int]:
-        result = await self._get("/events", limit=limit, offset=offset)
-        return result["items"], result["total"]
-
-    async def get_event(self, user_id: str, event_id: int) -> dict | None:
-        result = await self._get(f"/events/{event_id}")
-        return result.get("item")
-
-    async def update_event_tip(self, user_id: str, event_id: int, tip_json: str) -> None:
-        await self._patch(f"/events/{event_id}/tip", {"tip": tip_json})
-
-    async def get_tips(self, user_id: str, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-        result = await self._get("/tips", limit=limit, offset=offset)
-        return result["items"], result["total"]
-
 
 __all__ = ["RemoteDBStore"]

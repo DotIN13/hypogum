@@ -35,11 +35,11 @@ def create_mcp_server(
         lifespan: int = 5,
     ) -> dict:
         """Create or update a memory page."""
-        import datetime
+        from hypogum.config import now_local, tz_label
 
         valid_categories = [
             "goal", "event", "personality", "skill", "interest",
-            "preference", "ownership", "relationship", "weakness",
+            "preference", "ownership", "relationship", "weakness", "struggle",
         ]
         if category not in valid_categories:
             raise ValueError(f"Invalid category '{category}'. Must be: {', '.join(valid_categories)}")
@@ -47,19 +47,88 @@ def create_mcp_server(
         confidence = max(1, min(10, int(confidence)))
         lifespan = max(1, min(10, int(lifespan)))
 
-        now = datetime.datetime.now(datetime.UTC)
-        timestamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        date_str = timestamp[:10]
+        local_now = now_local(config.timezone)
+        timestamp = local_now.isoformat(timespec="seconds")
+        date_str = local_now.strftime("%Y-%m-%d")
+        tz = tz_label(config.timezone)
+
+        if category == "event":
+            ev = evidence or "manually added via MCP"
+            slug = content.lower().replace(" ", "_").replace("/", "_")[:60]
+            safe_hm = local_now.strftime("%H%M")
+            path = f"calendar_events/observed/{date_str}T{safe_hm}_event_{slug}.md"
+            body = f"""---
+type: calendar_event
+source: user
+significant: true
+date: {date_str}
+start: {timestamp}
+end:
+tz: {tz}
+category: event
+title: {content}
+confidence: {confidence}
+lifespan: {lifespan}
+last_updated: {timestamp}
+evidence_count: 1
+tags: []
+related: []
+---
+
+# {content}
+
+{content}
+
+## Evidence
+- [{date_str}] {ev}
+
+## History
+- {date_str}: created via MCP
+"""
+            memory_store.write_page(path, body)
+            logger.info(
+                "Significant calendar event added via MCP: {} [{}]", content[:80], path,
+            )
+            return {"status": "ok", "path": path, "created": True}
+
+        if category in ("weakness", "struggle"):
+            ev = evidence or "manually added via MCP"
+            slug = content.lower().replace(" ", "_").replace("/", "_")[:60]
+            subdir = "weaknesses" if category == "weakness" else "struggles"
+            path = f"{subdir}/{slug}.md"
+            body = f"""---
+type: {category}
+confidence: {confidence}
+lifespan: {lifespan}
+last_updated: {timestamp}
+evidence_count: 1
+tags: []
+related: []
+---
+
+# {content}
+
+{content}
+
+## Evidence
+- [{date_str}] {ev}
+
+## History
+- {date_str}: created via MCP
+"""
+            memory_store.write_page(path, body)
+            logger.info("Memory {}: {} [{}]", "added", content[:80], path)
+            return {"status": "ok", "path": path, "created": True}
 
         subtype_map = {
             "personality": "personality", "skill": "skill", "interest": "interest",
             "preference": "preference", "ownership": "ownership",
-            "relationship": "relationship", "weakness": "weakness",
+            "relationship": "relationship",
         }
         subtype = subtype_map.get(category)
 
         category_dir = {
-            "goal": "goals", "event": "events",
+            "goal": "goals",
         }
         subdir = category_dir.get(category, "traits")
 
@@ -79,7 +148,7 @@ def create_mcp_server(
             new_body = existing_content + "\n" + evidence_entry + "\n"
         else:
             new_body = f"""---
-type: {"goal" if category == "goal" else "event" if category == "event" else "trait"}
+type: {"goal" if category == "goal" else "trait"}
 {'subtype: ' + subtype if subtype else ''}
 confidence: {confidence}
 lifespan: {lifespan}
@@ -115,7 +184,7 @@ related: []
 
     @mcp.tool()
     async def memory_list(subdir: str | None = None) -> list[str]:
-        """List memory pages, optionally filtered by subdirectory (entities, traits, events, goals, tips)."""
+        """List memory pages, optionally filtered by subdirectory (entities, traits, goals, tips, weaknesses, struggles, calendar_events/observed, ...)."""
         return memory_store.list_pages(subdir)
 
     @mcp.tool()
@@ -135,9 +204,29 @@ related: []
 
     @mcp.tool()
     async def get_insights(limit: int = 10, offset: int = 0) -> list[dict]:
-        """Fetch recent analysis event summaries."""
-        items, _ = await db.get_events(user_id, limit, offset)
-        return items
+        """Fetch recent activity from the calendar (observed/ bucket, newest first)."""
+        from hypogum.calendar.parse import recent_observed_entries
+        return recent_observed_entries(memory_store.root, limit, offset)
+
+    @mcp.tool()
+    async def calendar_add(note: str) -> dict:
+        """Queue a calendar note for the agent to ingest into calendar_events/.
+
+        Free text — e.g. 'standup every weekday 9am' or 'lunch with Alice Tue 12-1pm',
+        or 'spent the afternoon refactoring'. The ingest agent parses it into a
+        source:user planned/actual (or recurring) calendar event.
+        """
+        import uuid
+
+        from hypogum.config import now_local
+
+        inbox = memory_store.root / ".tasks" / "user-input"
+        inbox.mkdir(parents=True, exist_ok=True)
+        ts = now_local(config.timezone).strftime("%Y-%m-%dT%H-%M-%S")
+        path = inbox / f"mcp_{ts}_{uuid.uuid4().hex[:6]}.md"
+        path.write_text(note.strip() + "\n", encoding="utf-8")
+        logger.info("Queued calendar note via MCP: {}", path.name)
+        return {"status": "ok", "queued": path.name}
 
     @mcp.tool()
     async def add_goal(content: str, evidence: str | None = None) -> dict:
@@ -160,6 +249,6 @@ related: []
     async def list_categories() -> list[str]:
         """List all memory categories."""
         return ["goal", "event", "personality", "skill", "interest",
-                "preference", "ownership", "relationship", "weakness"]
+                "preference", "ownership", "relationship", "weakness", "struggle"]
 
     return mcp

@@ -49,17 +49,6 @@ users = Table(
     Column("updated_at", String),
 )
 
-user_events = Table(
-    "user_events", _metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("timestamp", String, nullable=False),
-    Column("activity_summary", Text, nullable=False),
-    Column("raw_transcripts", Text),
-    Column("context", Text),
-    Column("user_id", String, ForeignKey("users.id")),
-    Column("proactive_tip", Text),
-)
-
 observations = Table(
     "observations", _metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -191,75 +180,3 @@ class SQLAlchemyDBStore(DBStore):
             row = result.mappings().first()
             return dict(row) if row else None
 
-    # ── events ────────────────────────────────
-
-    async def save_event(self, user_id: str, timestamp: str, summary: str,
-                         transcripts: str, context: str) -> int:
-        assert self._engine is not None
-        async with self._write_lock:
-            async with self._engine.begin() as conn:
-                result = await conn.execute(insert(user_events).values(
-                    timestamp=timestamp, activity_summary=summary,
-                    raw_transcripts=transcripts, context=context, user_id=user_id,
-                ))
-                return int(result.inserted_primary_key[0])
-
-    async def get_events(self, user_id: str, limit: int = 15, offset: int = 0) -> tuple[list[dict], int]:
-        assert self._engine is not None
-        async with self._engine.connect() as conn:
-            total = await conn.scalar(
-                select(func.count()).select_from(user_events).where(user_events.c.user_id == user_id)
-            )
-            result = await conn.execute(
-                select(
-                    user_events.c.id, user_events.c.timestamp, user_events.c.activity_summary,
-                    user_events.c.raw_transcripts, user_events.c.context, user_events.c.proactive_tip,
-                )
-                .where(user_events.c.user_id == user_id)
-                .order_by(user_events.c.id.desc())
-                .limit(limit).offset(offset)
-            )
-            return [dict(r) for r in result.mappings()], int(total or 0)
-
-    async def get_event(self, user_id: str, event_id: int) -> dict | None:
-        assert self._engine is not None
-        async with self._engine.connect() as conn:
-            result = await conn.execute(
-                select(
-                    user_events.c.id, user_events.c.timestamp, user_events.c.activity_summary,
-                    user_events.c.raw_transcripts, user_events.c.context, user_events.c.proactive_tip,
-                )
-                .where(user_events.c.id == event_id, user_events.c.user_id == user_id)
-            )
-            row = result.mappings().first()
-            return dict(row) if row else None
-
-    async def update_event_tip(self, user_id: str, event_id: int, tip_json: str) -> None:
-        assert self._engine is not None
-        async with self._write_lock:
-            async with self._engine.begin() as conn:
-                await conn.execute(
-                    update(user_events)
-                    .where(user_events.c.id == event_id, user_events.c.user_id == user_id)
-                    .values(proactive_tip=tip_json)
-                )
-
-    async def get_tips(self, user_id: str, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-        assert self._engine is not None
-        async with self._engine.connect() as conn:
-            total = await conn.scalar(
-                select(func.count()).select_from(user_events).where(
-                    user_events.c.user_id == user_id,
-                    user_events.c.proactive_tip.isnot(None),
-                )
-            )
-            result = await conn.execute(
-                select(
-                    user_events.c.id, user_events.c.timestamp,
-                    user_events.c.activity_summary, user_events.c.proactive_tip,
-                )
-                .where(user_events.c.user_id == user_id, user_events.c.proactive_tip.isnot(None))
-                .order_by(user_events.c.id.desc())
-                .limit(limit).offset(offset)
-            )
-            return [dict(r) for r in result.mappings()], int(total or 0)

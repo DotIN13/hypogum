@@ -8,8 +8,10 @@ format, cross-referencing rules, and maintenance workflows.
 ## Directory structure
 
 - `entities/`  — people, organizations, projects, tools, services
-- `traits/`    — personality, skill, interest, preference, ownership, weakness
-- `events/`    — significant occurrences (compound, not per-cycle observations)
+- `traits/`    — personality, skill, interest, preference, ownership, relationship
+- `weaknesses/` — observed weaknesses (impatience, knowledge gaps, procrastination patterns, etc.)
+- `struggles/`  — recurring pain points (context-switching, tool friction, recurring blockers)
+- `calendar_events/` — timeline of what the user did / plans (see "Calendar" below); replaces the old `events/`
 - `goals/`     — current and past objectives
 - `index.md`   — category-organized catalog of every page (LLM-maintained)
 - `log.md`     — append-only audit trail (LLM-appends, newest first)
@@ -22,19 +24,24 @@ Every page is a markdown file with YAML frontmatter and a structured body.
 
 ```yaml
 ---
-type: entity          # entity | trait | event | goal
+type: entity          # entity | trait | calendar_event | goal | weakness | struggle
 confidence: 5         # 1-10, higher = more certain
 lifespan: 5           # 1-10, higher = longer persistence
-last_updated: 2026-06-24T10:00:00Z  # ISO 8601
+last_updated: 2026-06-24T10:00:00-07:00  # offset-aware local ISO
 evidence_count: 1
 tags: []
 related: []           # [[wikilinks]]
 ---
 ```
 
+> **Timestamps:** every value written into the memory store is **offset-aware local
+> ISO** (e.g. `2026-06-25T09:00:00-07:00`), from the configured timezone — never UTC
+> or a trailing `Z`. (The relational DB and the raw capture artifacts under
+> `observations/` stay UTC; you never write those.)
+
 Trait pages also require:
 ```yaml
-subtype: skill        # personality|skill|interest|preference|ownership|relationship|weakness
+subtype: skill        # personality|skill|interest|preference|ownership|relationship
 ```
 
 ### Body structure
@@ -75,6 +82,80 @@ combining all evidence so far.
 - **related** — `[[wikilinks]]` to other memory pages. Update the `related`
   frontmatter of both pages when adding a new cross-reference.
 
+## Calendar (`calendar_events/`)
+
+A record of what the user did and plans — one markdown file per event. Files are
+organised into three **lifecycle folders**; the folder is the source of truth for
+lifecycle, so there is **no `status` field**. Frontmatter is the structured source
+of truth (a derived `.ics` is generated from it). This replaces the old `events/`.
+
+```
+calendar_events/
+├── suggested/   agent proposals (created in the tips step); accept → move to planned/, dismiss → delete
+├── planned/     committed future: user plans, imported events, recurring series, accepted suggestions
+└── observed/    confirmed happened (system-observed AND user-reported); holds the open "now" block; terminal
+```
+
+Filename within a bucket: `YYYY-MM-DDTHHMM_<category>_<slug>.md`.
+
+### Frontmatter
+
+```yaml
+---
+type: calendar_event
+source: observed          # observed | user | imported | agent
+significant: false        # true → curated: indexed, cross-linked, lint, search
+date: 2026-06-25          # local day bucket (from context.json)
+start: 2026-06-25T09:00:00-07:00  # offset-aware local ISO
+end: 2026-06-25T10:30:00-07:00    # offset-aware local; leave EMPTY only while an observed block is in progress
+tz: America/Los_Angeles     # from context.json (never compute it yourself)
+category: coding            # base set below; free-form allowed
+title: Worked on the calendar feature
+all_day: false
+missed: false               # set true on a planned occurrence whose time passed unfulfilled
+cancelled: false            # set true on a cancelled instance/event
+recurrence:                 # RRULE on a planned series, e.g. FREQ=WEEKLY;BYDAY=MO,WE,FR
+recurrence_id:              # override of one instance (original instance ISO)
+series:                     # [[calendar_events/planned/...]] master (on overrides/actuals)
+fulfills:                   # [[planned occurrence]] this observed event satisfies
+fulfilled_by:               # [[observed event]] (on the planned)
+occurrence:                 # instance date this observed/override maps to
+last_updated: 2026-06-25T10:30:05-07:00
+# when significant: true, also include: confidence, lifespan, tags, related, evidence_count
+---
+Body: arbitrarily long, with [[wikilinks]] to entities/projects/people.
+```
+
+### Categories (base set, not enforced)
+
+`coding, writing, communication, meeting, research, design, browsing, media,
+admin, break, other` — coin a new one when none fits.
+
+### Two flavors
+
+- `significant: false` (default) — timeline only. **Excluded** from `index.md`,
+  cross-linking, lint, and search.
+- `significant: true` — curated occurrence (carries `confidence`/`lifespan`/
+  evidence/history); indexed, cross-linked, lint-checked, searchable.
+
+### Rules
+
+- **Single writer:** you only mutate the one open observed block; treat every
+  other file — and anything `source: user` or `locked: true` — as read-only.
+  Never create files in `suggested/` here (that is the tips step's job).
+- **Open block:** while an observed activity is ongoing its file (in `observed/`)
+  has empty `end`. Close it (fill `end`) on activity/category change, a gap
+  > ~20 min, or day rollover; self-heal a stale open block at its last observed time.
+- **Lifecycle moves:** a user-accepted suggestion is a file MOVED `suggested/ → planned/`
+  (keep the filename so its calendar UID stays stable). A planned event that occurs
+  produces a new `observed/` file linked back via `fulfills`/`fulfilled_by`; a
+  planned occurrence whose time passes unfulfilled gets `missed: true` in place.
+- **Recurrence:** a repeating plan is ONE `planned/` series master with
+  `recurrence:<RRULE>`; occurrences are not stored. A single changed instance is an
+  override (`recurrence_id` + `series`).
+- **Back-links:** calendar files may link OUT to entities, but are **exempt** from
+  the reciprocal back-link rule below — do not add them to a target's `related`.
+
 ## Cross-referencing rules
 
 1. Use `[[path.md]]` wikilinks for any entity, trait, event, or goal
@@ -107,11 +188,17 @@ combining all evidence so far.
 ## traits
 - [[traits/Python.md]] — Proficient backend/scripting language (confidence 7)
 
-## events
-- [[events/2026-06-20_onboarding.md]] — Started new onboarding project
+## calendar_events (significant only)
+- [[calendar_events/observed/2026-06-20T0900_milestone_onboarding-kickoff.md]] — Started new onboarding project
 
 ## goals
 - [[goals/learn_rust.md]] — Learning Rust for systems programming
+
+## weaknesses
+- [[weaknesses/impatience-with-docs.md]] — Tends to skip documentation and jump to code (confidence 6)
+
+## struggles
+- [[struggles/context-switching.md]] — Loses focus when toggling between 3+ projects in a day (confidence 7)
 ```
 
 Each entry has the `[[wikilink]]`, an em-dash, and a one-line summary
@@ -131,16 +218,16 @@ entry and every index entry points to an existing page.
 ```markdown
 # Memory Log
 
-## [2026-06-24 10:30:00] ingest | 3 observations
+## [2026-06-24 10:30:00 -0700] ingest | 3 observations
 - entities/Apollo.md: added @alice as reviewer, confidence 6→7
 - traits/Python.md: new evidence, confidence unchanged
 - entities/Cursor.md: NEW — switched from VSCode
 
-## [2026-06-25 02:00:00] lint | daily health check
+## [2026-06-25 02:00:00 -0700] lint | daily health check
 - 3 auto-fixes, 2 contradictions flagged, 5 pages marked stale
 ```
 
-Each log entry starts with `## [YYYY-MM-DD HH:MM:SS] <operation> | <summary>`.
+Each log entry starts with `## [YYYY-MM-DD HH:MM:SS ±HHMM] <operation> | <summary>` (offset-aware local time).
 Operations: `ingest`, `lint`, `query`, `manual-edit`.
 
 ## Ingest workflow (agent instructions)
@@ -152,14 +239,15 @@ When processing observer product files:
 3. Read `log.md` (last ~20 entries) for recent context.
 4. For each observation in the products:
    a. Identify entities (people, projects, tools) — create or update entity pages.
-   b. Identify traits (skills, preferences, habits, weaknesses) — create or update trait pages.
-   c. Identify significant events — create event pages or append to entity pages.
+   b. Identify traits (skills, preferences, habits) — create or update trait pages.
+   c. Identify significant occurrences — record them as `calendar_events/` entries with `significant: true` (append evidence/history like any curated page). Do not create separate `events/` pages.
    d. Identify goals — create or update goal pages.
+   e. Identify **weaknesses** — recurring gaps, impatience, skill limitations, procrastination patterns. Create or update pages in `weaknesses/`.
+   f. Identify **struggles** — persistent pain points, tool friction, context-switching costs, repeated blockers. Create or update pages in `struggles/`.
 5. Cross-reference across products: a calendar mention of @alice connects to a screen observation showing @alice in Slack.
 6. Write all updated/new pages (batch writes — one write per page).
 7. Update `index.md`.
 8. Append entry to `log.md`.
-9. Write `data/memory/.tasks/ingest-result.json` with summary.
 
 ## Lint workflow (agent instructions)
 
@@ -179,4 +267,3 @@ When performing a health check:
 4. Auto-fix safe issues (cross-refs, frontmatter, broken links).
 5. Flag ambiguous issues in result (contradictions, duplicates, decay proposals).
 6. Append entry to `log.md`.
-7. Write `data/memory/.tasks/lint-result.json` with findings.

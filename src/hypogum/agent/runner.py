@@ -4,6 +4,7 @@ from loguru import logger
 
 from hypogum.agent.observers.base import Observer
 from hypogum.agent.processor.pipeline import run_processing_loop
+from hypogum.agent.scaffold import ensure_agent_opencode_config
 from hypogum.agent.utils.activity_detector import PauseGate
 from hypogum.agent.utils.notifier import Notifier
 from hypogum.config import Config
@@ -21,11 +22,16 @@ async def run_agent(
     notifier: Notifier | None = None,
     pause_gate: PauseGate | None = None,
 ) -> None:
-    """Main background agent loop: spawns observer tasks + processing loop (ingest + tips inline)."""
+    """Main background agent loop.
+
+    Spawns observer tasks plus the processing loop (ingest + tips inline).
+    """
 
     user_id = config.user_id
     stop_event = asyncio.Event()
     data_dir = config.data_dir
+
+    ensure_agent_opencode_config(memory_store.root.parent)
 
     log_dir = data_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)

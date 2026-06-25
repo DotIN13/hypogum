@@ -5,10 +5,10 @@ Standalone background agent — observes your screen, analyzes activity via mult
 ## Quick start
 
 ```bash
-# Create venv and install
+# Create venv and install (everything installs by default; platform-specific deps auto-install)
 python -m venv .venv
-.venv\Scripts\pip install -e ".[all]"       # Windows
-.venv/bin/pip install -e ".[all]"            # macOS / Linux
+.venv\Scripts\pip install -e .              # Windows
+.venv/bin/pip install -e .                  # macOS / Linux
 
 # Set your LLM API key
 cp .env.example .env
@@ -56,12 +56,11 @@ CameraObserver ─┘
                        ▼
               [Processing Loop, 600s]
                   ┌─ multimodal LLM analysis
-                  ├─ save event to DB
-                  ├─ ingest into memory (opencode session)
+                  ├─ ingest into memory + calendar_events/ (opencode session)
                   └─ follow-up tips in same session
                        │
                        ▼
-              memory/tips/<goal>/<timestamp>-<slug>.md
+              memory/tips/<category>/<timestamp>-<slug>.md
                   ┌─ each tip is a markdown file
                   └─ desktop notification for latest tip
 ```
@@ -74,6 +73,10 @@ CameraObserver ─┘
 | `hypogum agent` | Run observer + processing loop (ingest + tips inline in same LLM session, connects to `hypogum db` over HTTP) |
 | `hypogum mcp --transport stdio` | MCP endpoint for Claude Desktop / VS Code |
 | `hypogum mcp --transport http --port 8080` | MCP endpoint for remote AI agents |
+| `hypogum note "<text>"` | Queue a note (e.g. a planned event) for the agent to ingest into the calendar |
+| `hypogum calendar export [--out PATH] [--days N]` | Export `data/calendar.ics` from the markdown calendar |
+| `hypogum calendar show [--date YYYY-MM-DD] [--bucket suggested\|planned\|observed]` | Print calendar entries |
+| `hypogum calendar view [--out-dir DIR] [--no-png]` | Render `calendar_view.md` + day/week/month PNGs |
 
 ## MCP tools
 
@@ -82,7 +85,8 @@ CameraObserver ─┘
 | `query_memory(query, category?, limit=10)` | Semantic search across vector memory |
 | `add_memory(content, category, evidence?, confidence=5, lifespan=5)` | Add entry to memory |
 | `get_tips(limit=10, offset=0)` | Fetch recent proactive tips |
-| `get_insights(limit=10, offset=0)` | Fetch recent analysis event summaries |
+| `get_insights(limit=10, offset=0)` | Fetch recent calendar activity (observed) |
+| `calendar_add(note)` | Queue a calendar note (planned/recurring/actual) for the agent to ingest |
 | `add_goal(content, evidence?)` | Add a goal to track |
 | `capture_now()` | Trigger immediate screen capture |
 | `list_categories()` | List all memory categories |
@@ -141,16 +145,19 @@ smaller on-screen changes. Set `HYPOGUM_SCREEN_DEDUP_ENABLED=false` to keep ever
 
 ## Data storage
 
-- `data/app.db` — SQLite (observations, events, tips)
+- `data/app.db` — SQLite (observations)
 - `data/chroma.db/` — ChromaDB (vector embeddings)
 - `data/observations/YYYY-MM-DD/artifacts/` — JPEG screenshots
 - `data/observations/YYYY-MM-DD/entries/` — JSON observation metadata
+- `data/memory/calendar_events/` — markdown calendar in `suggested/`/`planned/`/`observed/` (what you did / plan); see `design/calendar-support.md`
+- `data/memory/calendar_view.md` + `calendar_view_{day,week,month}.png` — rendered calendar views (refreshed after each cycle)
+- `data/calendar.ics` — exported calendar (subscribe in any calendar app)
+
+> Memory-store files (`memory/` pages, products, calendar, tips, `log.md`, views, `context.json`) use **offset-aware local time** (`HYPOGUM_TIMEZONE`, default OS-local). The relational DB and the raw `observations/` capture artifacts stay UTC.
 
 ## Install options
 
 ```bash
-pip install -e ".[all]"        # Everything
-pip install -e ".[agent,llm]"  # Just the agent + LLM
-pip install -e ".[db]"         # Just the db service
-pip install -e ".[mcp,llm]"    # Just the MCP endpoint
+pip install -e .          # everything (platform-specific deps auto-install via markers)
+pip install -e ".[dev]"   # + ruff & pytest for development
 ```

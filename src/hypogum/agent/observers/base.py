@@ -33,7 +33,7 @@ class Observer(ABC):
 
     async def describe(
         self, db, user_id: str, data_dir: Path, *,
-        llm=None, prompts_dir: Path | None = None,
+        llm=None, prompts_dir: Path | None = None, tz_name: str | None = None,
     ) -> str | None:
         """Convert unprocessed observations into a product .md file.
         Returns the relative product path or None.

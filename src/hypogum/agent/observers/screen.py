@@ -33,7 +33,7 @@ class ScreenObserver(Observer):
 
     async def describe(
         self, db, user_id: str, data_dir: Path, *,
-        llm=None, prompts_dir: Path | None = None,
+        llm=None, prompts_dir: Path | None = None, tz_name: str | None = None,
     ) -> str | None:
         """Load pending screen observations, call LLM for rich description,
         save as product .md file. Returns relative product path or None."""
@@ -48,6 +48,7 @@ class ScreenObserver(Observer):
             prompts_dir=prompts_dir or Path("."),
             data_dir=data_dir,
             max_artifacts=20,
+            tz_name=tz_name,
         )
 
     async def _load_prev_hash_from_db(self, db, user_id: str, data_dir: Path) -> int | None:

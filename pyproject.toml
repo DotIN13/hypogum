@@ -4,19 +4,37 @@ version = "0.2.0"
 description = "Standalone background agent with observer, processor, tip engine, and MCP endpoint"
 requires-python = ">=3.12"
 dependencies = [
+    # core
     "jinja2>=3.0",
     "loguru>=0.7",
     "python-dotenv>=1.0",
     "pydantic>=2.0",
+    "tzdata>=2024.1",
+    "httpx>=0.27",
+    # db service
+    "fastapi>=0.115",
+    "uvicorn[standard]",
+    "python-jose[cryptography]",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "asyncpg>=0.29",
+    # observers / agent
+    "mss",
+    "opencv-python",
+    "pillow>=10.0",
+    # llm providers
+    "google-genai>=1.0",
+    "openai>=1.0",
+    "anthropic>=0.34",
+    # mcp endpoint
+    "mcp>=1.0",
+    # calendar view rendering
+    "matplotlib>=3.8",
+    # platform-specific (auto-installed only where applicable)
+    "pywin32>=310; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
-db = ["fastapi>=0.115", "uvicorn[standard]", "python-jose[cryptography]", "httpx>=0.27", "sqlalchemy[asyncio]>=2.0", "aiosqlite>=0.20", "asyncpg>=0.29"]
-agent = ["mss", "opencv-python", "pillow>=10.0", "httpx>=0.27"]
-llm = ["google-genai>=1.0", "openai>=1.0", "anthropic>=0.34"]
-mcp = ["mcp>=1.0", "httpx>=0.27"]
-all = ["hypogum[db,agent,llm,mcp]"]
-windows = ["pywin32>=310"]
 dev = ["ruff>=0.6", "pytest>=8.0"]
 
 [build-system]
@@ -25,6 +43,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"hypogum.agent.prompts" = ["*.md"]
+"hypogum.agent.templates" = ["*.json"]
 
 [tool.ruff]
 target-version = "py312"

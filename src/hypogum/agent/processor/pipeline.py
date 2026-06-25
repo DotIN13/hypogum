@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from loguru import logger
 from hypogum.agent.prompts import render_prompt
 from hypogum.agent.scheduler import IntervalTask
 from hypogum.agent.utils.notifier import Notifier
-from hypogum.config import Config
+from hypogum.config import Config, resolve_timezone
 from hypogum.db.relational.base import DBStore
 from hypogum.llm.base import LLMProvider
 from hypogum.memory.agent import invoke_agent, invoke_agent_continue
@@ -26,7 +27,7 @@ async def run_processing_cycle(
     config: Config,
     notifier: Notifier | None = None,
 ) -> dict | None:
-    """One processing cycle: describe → save event → ingest + tips in same session."""
+    """One processing cycle: describe → ingest (calendar) + tips in one session."""
 
     # Bail early if no pending observations at all
     pending = await db.get_pending_observations(user_id, limit=1)
@@ -34,11 +35,18 @@ async def run_processing_cycle(
         logger.info("No pending observations — skipping cycle")
         return None
 
+    # Resolve local time + tz once for this cycle (used by describe and the agent).
+    tz = resolve_timezone(config.timezone)
+    local_now = datetime.datetime.now(tz)
+    local_date = local_now.strftime("%Y-%m-%d")
+    tz_name = getattr(tz, "key", None) or local_now.strftime("%Z") or str(tz)
+
     # Phase A: Run all observers' describe steps
     products: list[str] = []
     for obs in observers:
         product_path = await obs.describe(
             db, user_id, data_dir, llm=llm, prompts_dir=prompts_dir,
+            tz_name=config.timezone,
         )
         if product_path:
             products.append(product_path)
@@ -49,28 +57,18 @@ async def run_processing_cycle(
 
     logger.info("Generated {} product(s): {}", len(products), products)
 
-    # Phase B: Derive summary from first screen product, save event
+    # Phase B: Derive a short summary (for logging) from the screen product body.
     summary = ""
     for p in products:
         if "screen" in p:
             prod_abs = data_dir / p
             if prod_abs.exists():
+                from hypogum.calendar.parse import body_after_frontmatter
                 text = prod_abs.read_text(encoding="utf-8")
-                summary = text[:500]
+                summary = body_after_frontmatter(text)[:500]
             break
     if not summary:
         summary = ", ".join(products)
-
-    import time
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-    event_id = await db.save_event(
-        user_id,
-        timestamp,
-        summary[:500],
-        ", ".join(products),
-        json.dumps({"products": products}),
-    )
 
     # Phase C: Invoke ingest agent
     tasks_dir = memory_store.root / ".tasks" / "ingest-input"
@@ -81,7 +79,12 @@ async def run_processing_cycle(
     )
 
     (tasks_dir / "context.json").write_text(
-        json.dumps({"timestamp": timestamp, "event_id": event_id}), encoding="utf-8",
+        json.dumps({
+            "local_now": local_now.isoformat(timespec="seconds"),
+            "local_date": local_date,
+            "tz": tz_name,
+        }),
+        encoding="utf-8",
     )
 
     ingest_prompt = render_prompt(
@@ -128,9 +131,9 @@ async def run_processing_cycle(
 
         if config.notify_on_tips and notifier:
             first = new_tips[0]
-            goal = first.get("goal", "you")[:50]
+            category = first.get("category", "general")[:50]
             summary = first.get("summary", "")[:120]
-            title = f"Tip for: {goal}"
+            title = f"New {category} tip"
             body = summary
             if len(new_tips) > 1:
                 body += f" (+{len(new_tips) - 1} more)"
@@ -138,7 +141,28 @@ async def run_processing_cycle(
     else:
         logger.info("No tips generated")
 
-    result = {"event_id": event_id, "summary": summary[:200], "products": products}
+    if config.calendar_ics_enabled:
+        try:
+            from hypogum.calendar.ics import export_ics
+            count = export_ics(memory_store.root, config.data_dir / "calendar.ics")
+            logger.info("Exported {} calendar event(s) to calendar.ics", count)
+        except Exception as e:
+            logger.warning("Calendar ICS export failed: {}", e)
+
+    if config.calendar_view_enabled:
+        try:
+            from hypogum.calendar.view import export_view
+            export_view(
+                memory_store.root, memory_store.root,
+                today=datetime.date.fromisoformat(local_date),
+                tz_label=tz_name,
+                png=config.calendar_view_png_enabled,
+            )
+            logger.info("Calendar view rendered")
+        except Exception as e:
+            logger.warning("Calendar view render failed: {}", e)
+
+    result = {"summary": summary[:200], "products": products}
     return result
 
 

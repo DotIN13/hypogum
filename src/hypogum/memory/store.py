@@ -1,10 +1,8 @@
-import datetime
 import re
 from importlib import resources
 from pathlib import Path
 
 from loguru import logger
-
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 
@@ -12,12 +10,18 @@ _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
 class MemoryStore:
     """File-based CRUD for markdown memory pages under a root directory."""
 
-    def __init__(self, root: Path | str):
+    def __init__(self, root: Path | str, tz_name: str | None = None):
         self.root = Path(root)
+        self._tz_name = tz_name
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
-        for sub in ["entities", "traits", "events", "goals", "tips"]:
+        for sub in [
+            "entities", "traits", "goals", "tips", "weaknesses", "struggles",
+            "calendar_events/suggested",
+            "calendar_events/planned",
+            "calendar_events/observed",
+        ]:
             (self.root / sub).mkdir(parents=True, exist_ok=True)
         self._bootstrap_conventions()
 
@@ -88,7 +92,8 @@ class MemoryStore:
         if not path.exists():
             path.write_text("# Memory Log\n\n", encoding="utf-8")
         existing = path.read_text(encoding="utf-8")
-        now = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M:%S")
+        from hypogum.config import now_local
+        now = now_local(self._tz_name).strftime("%Y-%m-%d %H:%M:%S %z")
         header = f"## [{now}] {entry}\n"
         lines = existing.split("\n")
         title = lines[0] if lines else "# Memory Log"
@@ -110,7 +115,7 @@ class MemoryStore:
             title = self._extract_title(content)
             result.append({
                 "path": f.relative_to(self.root).as_posix(),
-                "goal": fm.get("goal", f.parent.name),
+                "category": fm.get("category", f.parent.name),
                 "created": fm.get("created", ""),
                 "summary": fm.get("summary", title),
                 "content": content,

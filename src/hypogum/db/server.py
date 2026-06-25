@@ -25,15 +25,6 @@ def create_db_app(
     class MarkProcessedReq(BaseModel):
         ids: list[int]
 
-    class SaveEventReq(BaseModel):
-        timestamp: str
-        summary: str
-        transcripts: str
-        context: str
-
-    class UpdateTipReq(BaseModel):
-        tip: str
-
     # ── auth dependency ────────────────────────
 
     async def _get_auth(request: Request) -> AuthContext:
@@ -70,40 +61,6 @@ def create_db_app(
         if item is None:
             raise HTTPException(status_code=404, detail="Observation not found")
         return {"item": item}
-
-    # ── events ────────────────────────────────
-
-    @app.post("/api/v1/events")
-    async def save_event(req: SaveEventReq, ctx: AuthContext = Depends(_get_auth)):
-        event_id = await db.save_event(
-            ctx.user_id, req.timestamp, req.summary, req.transcripts, req.context,
-        )
-        return {"id": event_id}
-
-    @app.get("/api/v1/events")
-    async def get_events(limit: int = Query(15), offset: int = Query(0),
-                         ctx: AuthContext = Depends(_get_auth)):
-        items, total = await db.get_events(ctx.user_id, limit, offset)
-        return {"items": items, "total": total}
-
-    @app.get("/api/v1/events/{event_id}")
-    async def get_event(event_id: int, ctx: AuthContext = Depends(_get_auth)):
-        item = await db.get_event(ctx.user_id, event_id)
-        if item is None:
-            raise HTTPException(status_code=404, detail="Event not found")
-        return {"item": item}
-
-    @app.patch("/api/v1/events/{event_id}/tip")
-    async def update_event_tip(event_id: int, req: UpdateTipReq,
-                               ctx: AuthContext = Depends(_get_auth)):
-        await db.update_event_tip(ctx.user_id, event_id, req.tip)
-        return {"status": "ok"}
-
-    @app.get("/api/v1/tips")
-    async def get_tips(limit: int = Query(50), offset: int = Query(0),
-                       ctx: AuthContext = Depends(_get_auth)):
-        items, total = await db.get_tips(ctx.user_id, limit, offset)
-        return {"items": items, "total": total}
 
     @app.get("/api/v1/health")
     async def health():

@@ -1,3 +1,4 @@
+import datetime
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -5,6 +6,59 @@ from typing import Literal
 
 from dotenv import load_dotenv
 from loguru import logger
+
+
+def resolve_timezone(name: str | None):
+    """Return a tzinfo for the configured IANA name, or the OS-local timezone.
+
+    Using the OS-local timezone needs no extra dependency; an explicit IANA name
+    uses zoneinfo (and the `tzdata` package on platforms without a system tz db).
+    """
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+
+            return ZoneInfo(name)
+        except Exception as e:  # pragma: no cover - bad tz name / missing tzdata
+            logger.warning(
+                "Invalid HYPOGUM_TIMEZONE {!r} ({}); using OS-local", name, e,
+            )
+    return datetime.datetime.now().astimezone().tzinfo
+
+
+def now_local(name: str | None = None) -> datetime.datetime:
+    """Current time as an offset-aware datetime in the configured (or OS-local) tz."""
+    return datetime.datetime.now(resolve_timezone(name))
+
+
+def local_iso(name: str | None = None) -> str:
+    """Offset-aware local ISO timestamp to seconds, e.g. 2026-06-25T00:12:02-07:00."""
+    return now_local(name).isoformat(timespec="seconds")
+
+
+def local_date(name: str | None = None) -> str:
+    """Local calendar date, YYYY-MM-DD."""
+    return now_local(name).strftime("%Y-%m-%d")
+
+
+def to_local_iso(value: str, name: str | None = None) -> str:
+    """Convert a (UTC or offset-aware) ISO string to offset-aware local ISO.
+
+    Naive inputs are assumed UTC. Unparseable inputs are returned unchanged.
+    """
+    try:
+        dt = datetime.datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.UTC)
+    return dt.astimezone(resolve_timezone(name)).isoformat(timespec="seconds")
+
+
+def tz_label(name: str | None = None) -> str:
+    """A display label for the configured tz — IANA key when available, else abbrev."""
+    tz = resolve_timezone(name)
+    return getattr(tz, "key", None) or now_local(name).strftime("%Z") or str(tz)
 
 
 def _find_env() -> Path | None:
@@ -127,6 +181,14 @@ class Config:
     trait_similarity_threshold: float = 0.5
     memory_lint_interval: int = 86400
 
+    # ── calendar / user input ──
+    timezone: str | None = None
+    observe_user_input_enabled: bool = True
+    user_input_interval: int = 60
+    calendar_ics_enabled: bool = False
+    calendar_view_enabled: bool = True
+    calendar_view_png_enabled: bool = True
+
     @classmethod
     def from_env(cls) -> "Config":
         data_dir = _resolve_data_dir()
@@ -193,4 +255,11 @@ class Config:
             tip_summary_chars=int(os.environ.get("HYPOGUM_TIP_SUMMARY_CHARS", "1000")),
             trait_similarity_threshold=float(os.environ.get("HYPOGUM_TRAIT_SIMILARITY_THRESHOLD", "0.5")),
             memory_lint_interval=int(os.environ.get("HYPOGUM_MEMORY_LINT_INTERVAL", "86400")),
+
+            timezone=os.environ.get("HYPOGUM_TIMEZONE") or None,
+            observe_user_input_enabled=os.environ.get("HYPOGUM_OBSERVE_USER_INPUT_ENABLED", "true").lower() == "true",
+            user_input_interval=int(os.environ.get("HYPOGUM_USER_INPUT_INTERVAL", "60")),
+            calendar_ics_enabled=os.environ.get("HYPOGUM_CALENDAR_ICS", "false").lower() == "true",
+            calendar_view_enabled=os.environ.get("HYPOGUM_CALENDAR_VIEW", "true").lower() == "true",
+            calendar_view_png_enabled=os.environ.get("HYPOGUM_CALENDAR_VIEW_PNG", "true").lower() == "true",
         )
