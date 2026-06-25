@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import shlex
@@ -24,6 +25,17 @@ def _parse_session_id(stdout: str) -> str | None:
     return None
 
 
+def _save_session_log(memory_dir: Path, task: str, prompt: str, stdout: str) -> None:
+    """Write the opencode run output (JSON events) to a timestamped file in data/sessions/."""
+    ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%S")
+    log_dir = memory_dir.parent / "sessions"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / f"{ts}-{task}.jsonl"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(stdout.rstrip("\n") + "\n")
+    logger.info("[memory-agent] session log saved → {}", path)
+
+
 async def invoke_agent(
     task: str,
     memory_dir: Path,
@@ -33,6 +45,7 @@ async def invoke_agent(
     args: list[str] | None = None,
     serve_port: int = 4099,
     timeout: int = 300,
+    model: str | None = None,
 ) -> dict:
     """Shell out to the configured agent CLI for a memory task.
 
@@ -50,6 +63,8 @@ async def invoke_agent(
             "--format", "json",
             "--dangerously-skip-permissions",
         ]
+        if model:
+            args += ["--model", model]
 
     resolved = shutil.which(command)
     if resolved is None:
@@ -82,6 +97,8 @@ async def invoke_agent(
         logger.error("[memory-agent] {} exited with code {}: {}", task, proc.returncode, proc.stderr[:500])
         return {"status": "error", "error": proc.stderr[:500]}
 
+    _save_session_log(memory_dir, task, prompt, proc.stdout)
+
     session_id = _parse_session_id(proc.stdout)
 
     if session_id:
@@ -99,6 +116,7 @@ async def invoke_agent_continue(
     command: str = "opencode",
     serve_port: int = 4099,
     timeout: int = 300,
+    model: str | None = None,
 ) -> dict:
     """Send a follow-up prompt to an existing opencode session.
 
@@ -114,6 +132,8 @@ async def invoke_agent_continue(
         "--dir", str(memory_dir.parent),
         "--dangerously-skip-permissions",
     ]
+    if model:
+        args += ["--model", model]
 
     resolved = shutil.which(command)
     if resolved is None:
@@ -145,6 +165,8 @@ async def invoke_agent_continue(
     if proc.returncode != 0:
         logger.error("[memory-agent] tip session exited with code {}: {}", proc.returncode, proc.stderr[:500])
         return {"status": "error", "error": proc.stderr[:500]}
+
+    _save_session_log(memory_dir, f"{session_id[:8]}-continue", prompt, proc.stdout)
 
     logger.info("[memory-agent] tip session completed")
     return {"status": "ok"}

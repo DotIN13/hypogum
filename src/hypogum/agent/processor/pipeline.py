@@ -97,6 +97,7 @@ async def run_processing_cycle(
         prompt=ingest_prompt,
         serve_port=config.agent_serve_port,
         timeout=config.agent_timeout,
+        model=config.agent_model,
     )
     if ingest_result.get("status") == "ok":
         logger.info("Memory ingest completed: {}", ingest_result)
@@ -114,6 +115,7 @@ async def run_processing_cycle(
             prompt=render_prompt(config.prompts_dir, "tip_prompt.md"),
             serve_port=config.agent_serve_port,
             timeout=config.agent_timeout,
+            model=config.agent_model,
         )
     else:
         logger.info("No session_id from ingest, running tips standalone")
@@ -123,6 +125,7 @@ async def run_processing_cycle(
             prompt=render_prompt(config.prompts_dir, "tip_prompt.md"),
             serve_port=config.agent_serve_port,
             timeout=config.agent_timeout,
+            model=config.agent_model,
         )
 
     new_tips = [t for t in memory_store.list_tips(limit=10) if t["path"] not in tips_before]

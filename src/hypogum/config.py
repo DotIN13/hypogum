@@ -143,6 +143,7 @@ class Config:
     agent_timeout: int = 1800
     agent_serve_port: int = 4099
     agent_serve_host: str = "127.0.0.1"
+    agent_model: str | None = None
 
     auth_provider: Literal["noauth", "jwt", "oauth2"] = "noauth"
     auth_jwt_secret: str | None = None
@@ -218,6 +219,7 @@ class Config:
             agent_timeout=int(os.environ.get("HYPOGUM_AGENT_TIMEOUT", "1800")),
             agent_serve_port=int(os.environ.get("HYPOGUM_AGENT_SERVE_PORT", "4099")),
             agent_serve_host=os.environ.get("HYPOGUM_AGENT_SERVE_HOST", "127.0.0.1"),
+            agent_model=os.environ.get("HYPOGUM_AGENT_MODEL") or None,
 
             auth_provider=os.environ.get("HYPOGUM_AUTH_PROVIDER", "noauth"),  # type: ignore[arg-type]
             auth_jwt_secret=os.environ.get("HYPOGUM_AUTH_JWT_SECRET") or None,
