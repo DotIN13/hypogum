@@ -8,10 +8,8 @@ from pathlib import Path
 from loguru import logger
 
 
-def _parse_json_lines(stdout: str) -> tuple[str | None, str]:
-    """Extract sessionID and aggregated text from opencode --format json output."""
-    session_id = None
-    text_parts: list[str] = []
+def _parse_session_id(stdout: str) -> str | None:
+    """Extract sessionID from the first JSON line of opencode --format json output."""
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
@@ -20,11 +18,10 @@ def _parse_json_lines(stdout: str) -> tuple[str | None, str]:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if session_id is None:
-            session_id = event.get("sessionID")
-        if event.get("type") == "text":
-            text_parts.append(event.get("part", {}).get("text", ""))
-    return session_id, " ".join(text_parts)
+        sid = event.get("sessionID")
+        if sid:
+            return sid
+    return None
 
 
 async def invoke_agent(
@@ -41,13 +38,9 @@ async def invoke_agent(
 
     Attaches to a running ``opencode serve`` process to avoid cold boot.
     Agent has write access scoped to the data/ directory only.
-    Result is read from <memory_dir>/.tasks/<task>-result.json.
 
-    Returns a dict with ``status``, ``session_id`` (if available), and
-    ``output`` (aggregated text from the agent).
+    Returns a dict with ``status`` and ``session_id`` (if available).
     """
-    tasks_dir = memory_dir / ".tasks"
-    tasks_dir.mkdir(parents=True, exist_ok=True)
 
     if args is None:
         args = [
@@ -89,24 +82,13 @@ async def invoke_agent(
         logger.error("[memory-agent] {} exited with code {}: {}", task, proc.returncode, proc.stderr[:500])
         return {"status": "error", "error": proc.stderr[:500]}
 
-    session_id, output_text = _parse_json_lines(proc.stdout)
-
-    result_path = tasks_dir / f"{task}-result.json"
-    result: dict = {"status": "ok"}
-    if result_path.exists():
-        try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error("[memory-agent] failed to parse result JSON: {}", e)
+    session_id = _parse_session_id(proc.stdout)
 
     if session_id:
-        result["session_id"] = session_id
         logger.info("[memory-agent] {} session_id={}", task, session_id)
-    if output_text:
-        result["output"] = output_text[:500]
 
-    logger.info("[memory-agent] {} completed (stdout: {})", task, output_text[:200])
-    return result
+    logger.info("[memory-agent] {} completed", task)
+    return {"status": "ok", "session_id": session_id}
 
 
 async def invoke_agent_continue(
@@ -121,14 +103,8 @@ async def invoke_agent_continue(
     """Send a follow-up prompt to an existing opencode session.
 
     Uses ``--session`` to resume the session created by a prior
-    ``invoke_agent`` call.  Agent writes its result to
-    <memory_dir>/.tasks/tip-result.json.
-
-    Returns a dict with ``status``, ``session_id``, and ``output``
-    (aggregated text from the agent).
+    ``invoke_agent`` call.
     """
-    tasks_dir = memory_dir / ".tasks"
-    tasks_dir.mkdir(parents=True, exist_ok=True)
 
     args = [
         "run",
@@ -170,19 +146,5 @@ async def invoke_agent_continue(
         logger.error("[memory-agent] tip session exited with code {}: {}", proc.returncode, proc.stderr[:500])
         return {"status": "error", "error": proc.stderr[:500]}
 
-    _, output_text = _parse_json_lines(proc.stdout)
-
-    result_path = tasks_dir / "tip-result.json"
-    result: dict = {"status": "ok", "session_id": session_id}
-    if result_path.exists():
-        try:
-            result = json.loads(result_path.read_text(encoding="utf-8"))
-            result.setdefault("session_id", session_id)
-            logger.info("[memory-agent] tip result loaded from {}", result_path)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.error("[memory-agent] failed to parse tip result JSON: {}", e)
-    elif output_text:
-        result["output"] = output_text[:1000]
-        logger.info("[memory-agent] tip output (no result file): {}", output_text[:200])
-
-    return result
+    logger.info("[memory-agent] tip session completed")
+    return {"status": "ok"}

@@ -13,6 +13,3 @@ You are the hypogum memory ingest agent.
 7. Write all updated/new pages. Batch writes — one write per page per cycle, do not rewrite unchanged pages.
 8. Update {{ memory_path }}/index.md with new and changed page summaries.
 9. Append an entry to {{ memory_path }}/log.md.
-10. Write a result summary to {{ memory_path }}/.tasks/ingest-result.json with {status, pages_created, pages_updated, pages_touched, contradictions_flagged}.
-
-Respond with only a one-line summary of pages touched.

@@ -14,35 +14,6 @@ from hypogum.memory.agent import invoke_agent, invoke_agent_continue
 from hypogum.memory.store import MemoryStore
 
 
-TIP_PROMPT = """Based on everything you know about the user — recent activity on screen, stored goals, traits, and events in memory — generate actionable proactive tips.
-
-1. Read recent memory pages (goals, traits, events, log.md) to understand current context.
-2. Identify 1-3 high-impact, immediately actionable tips.
-3. For each tip, write a markdown file to memory/tips/<goal-slug>/<timestamp>-<slug>.md
-
-Each tip file must follow this format exactly:
-
----
-type: tip
-goal: <goal-slug>
-created: <ISO-8601 timestamp>
-summary: <one-sentence summary of the suggestion>
----
-
-# Tip: <short title>
-
-**Suggestion:** one-sentence actionable step.
-
-**Rationale:** why this matters right now, citing specific evidence from memory.
-```
-
-File naming: `memory/tips/<goal-slug>/<YYYY-MM-DDTHHMMSS>Z-<short-slug>.md`
-
-Goal directory slugs should match existing goal page filenames (e.g., `refactor-zmtiles-pipeline`).
-If no matching goal directory exists, create it.
-Focus on tips the user can act on immediately."""
-
-
 async def run_processing_cycle(
     user_id: str,
     db: DBStore,
@@ -56,6 +27,12 @@ async def run_processing_cycle(
     notifier: Notifier | None = None,
 ) -> dict | None:
     """One processing cycle: describe → save event → ingest + tips in same session."""
+
+    # Bail early if no pending observations at all
+    pending = await db.get_pending_observations(user_id, limit=1)
+    if not pending:
+        logger.info("No pending observations — skipping cycle")
+        return None
 
     # Phase A: Run all observers' describe steps
     products: list[str] = []
@@ -123,36 +100,43 @@ async def run_processing_cycle(
     else:
         logger.warning("Memory ingest issue: {}", ingest_result)
 
-    # Phase D: Follow-up tip generation in the same opencode session
+    # Phase D: Tip generation — resume session if available, else standalone
     session_id = ingest_result.get("session_id")
+    tips_before = {t["path"] for t in memory_store.list_tips(limit=50)}
+
     if session_id:
-        tip_result = await invoke_agent_continue(
+        await invoke_agent_continue(
             session_id=session_id,
             memory_dir=memory_store.root,
-            prompt=TIP_PROMPT,
+            prompt=render_prompt(config.prompts_dir, "tip_prompt.md"),
             serve_port=config.agent_serve_port,
             timeout=config.agent_timeout,
         )
-        if tip_result.get("status") == "ok":
-            new_tips = memory_store.list_tips(limit=3)
-            if new_tips:
-                logger.info("Generated {} tip(s) in session {}", len(new_tips), session_id)
-
-                if config.notify_on_tips and notifier:
-                    first = new_tips[0]
-                    goal = first.get("goal", "you")[:50]
-                    summary = first.get("summary", "")[:120]
-                    title = f"Tip for: {goal}"
-                    body = summary
-                    if len(new_tips) > 1:
-                        body += f" (+{len(new_tips) - 1} more)"
-                    await notifier.notify(title, body)
-            else:
-                logger.info("No tips generated in session {}", session_id)
-        else:
-            logger.warning("Tip follow-up issue: {}", tip_result)
     else:
-        logger.warning("No session_id from ingest, skipping inline tips")
+        logger.info("No session_id from ingest, running tips standalone")
+        await invoke_agent(
+            task="tips",
+            memory_dir=memory_store.root,
+            prompt=render_prompt(config.prompts_dir, "tip_prompt.md"),
+            serve_port=config.agent_serve_port,
+            timeout=config.agent_timeout,
+        )
+
+    new_tips = [t for t in memory_store.list_tips(limit=10) if t["path"] not in tips_before]
+    if new_tips:
+        logger.info("Generated {} tip(s)", len(new_tips))
+
+        if config.notify_on_tips and notifier:
+            first = new_tips[0]
+            goal = first.get("goal", "you")[:50]
+            summary = first.get("summary", "")[:120]
+            title = f"Tip for: {goal}"
+            body = summary
+            if len(new_tips) > 1:
+                body += f" (+{len(new_tips) - 1} more)"
+            await notifier.notify(title, body)
+    else:
+        logger.info("No tips generated")
 
     result = {"event_id": event_id, "summary": summary[:200], "products": products}
     return result
